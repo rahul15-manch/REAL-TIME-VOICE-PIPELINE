@@ -11,6 +11,44 @@ Each milestone is logged with date, scope, decisions, and outcomes.
 
 ---
 
+## Project Progress Summary
+
+> **Last Updated**: 2026-07-02 18:26 IST
+
+### Milestones
+
+| # | Milestone | Status | Package | Tests | Date |
+|---|---|---|---|---|---|
+| 1 | Session Management Layer | ✅ Complete | `app/session/` (5 files) | 166 | 2026-07-02 |
+| 2 | Production Readiness Audit | ✅ Complete | `tests/` (8 files) | — | 2026-07-02 |
+| 3 | Conversation State Machine | ✅ Complete | `app/conversation/` (6 files) | 146 | 2026-07-02 |
+| 4 | Event Bus | 🔲 Planned | `app/events/` | — | — |
+| 5 | Pipecat Pipeline Integration | 🔲 Planned | `app/pipeline/` | — | — |
+
+### Current Metrics
+
+| Metric | Value |
+|---|---|
+| Total source files | 11 (`app/session/` 5 + `app/conversation/` 6) |
+| Total statements | 330 |
+| Total tests | 312 (all passing) |
+| Line coverage | 100% |
+| Branch coverage | 100% |
+| Ruff | ✅ Clean |
+| Mypy (strict) | ✅ Clean |
+
+### Git History
+
+| Commit | Message | Files |
+|---|---|---|
+| `0772b50` | feat: conversation state machine | 12 changed, +1,718 |
+| `1a465e5` | feat: session management layer + audit suite | 20 changed, +2,058 |
+| `1900fc7` | first commit | — |
+
+**Branch**: `feature/session-management` → `origin/feature/session-management`
+
+---
+
 ## Milestone 1 — Session Management Layer
 
 **Date**: 2026-07-02  
