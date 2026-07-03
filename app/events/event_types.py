@@ -179,3 +179,37 @@ class PipelinePaused(Event):
 @dataclass(frozen=True, slots=True)
 class PipelineResumed(Event):
     """Pipecat pipeline resumed from pause."""
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Pipeline Builder Events
+# ──────────────────────────────────────────────────────────────────────
+
+@dataclass(frozen=True, slots=True)
+class PipelineCreated(Event):
+    """A new pipeline builder instance was created."""
+
+
+@dataclass(frozen=True, slots=True)
+class ProcessorAdded(Event):
+    """A processor was added to the pipeline builder."""
+
+
+@dataclass(frozen=True, slots=True)
+class ProcessorRemoved(Event):
+    """A processor was removed from the pipeline builder."""
+
+
+@dataclass(frozen=True, slots=True)
+class PipelineValidated(Event):
+    """The pipeline graph passed validation."""
+
+
+@dataclass(frozen=True, slots=True)
+class PipelineBuildSucceeded(Event):
+    """The pipeline was successfully built into an immutable graph."""
+
+
+@dataclass(frozen=True, slots=True)
+class PipelineBuildFailed(Event):
+    """The pipeline build process failed."""

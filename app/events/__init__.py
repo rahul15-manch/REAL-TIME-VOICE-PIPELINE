@@ -31,6 +31,12 @@ from .event_types import (
     SpeakingStarted,
     ThinkingStarted,
     TranscriptReady,
+    PipelineCreated,
+    ProcessorAdded,
+    ProcessorRemoved,
+    PipelineValidated,
+    PipelineBuildSucceeded,
+    PipelineBuildFailed,
 )
 from .exceptions import (
     DispatchError,
@@ -92,4 +98,11 @@ __all__: list[str] = [
     "PipelineStopped",
     "PipelinePaused",
     "PipelineResumed",
+    # Builder Events
+    "PipelineCreated",
+    "ProcessorAdded",
+    "ProcessorRemoved",
+    "PipelineValidated",
+    "PipelineBuildSucceeded",
+    "PipelineBuildFailed",
 ]

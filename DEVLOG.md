@@ -23,17 +23,18 @@ Each milestone is logged with date, scope, decisions, and outcomes.
 | 2 | Production Readiness Audit | ✅ Complete | `tests/` (8 files) | — | 2026-07-02 |
 | 3 | Conversation State Machine | ✅ Complete | `app/conversation/` (6 files) | 146 | 2026-07-02 |
 | 4 | Event Bus | ✅ Complete | `app/events/` (10 files) | 30 | 2026-07-02 |
-| 5 | Pipecat Pipeline Integration | 🔲 Planned | `app/pipeline/` | — | — |
+| 5 | Pipeline Builder | ✅ Complete | `app/pipeline/` (9 files) | 25 | 2026-07-03 |
+| 6 | Pipeline Runner | 🔲 Planned | `app/runner/` | — | — |
 
 ### Current Metrics
 
 | Metric | Value |
 |---|---|
-| Total source files | 21 (`app/session/` 5 + `app/conversation/` 6 + `app/events/` 10) |
-| Total statements | 641 |
-| Total tests | 342 (all passing) |
-| Line coverage | >95% |
-| Branch coverage | >95% |
+| Total source files | 30 (`session/` 5 + `conversation/` 6 + `events/` 10 + `pipeline/` 9) |
+| Total statements | 957 |
+| Total tests | 367 (all passing) |
+| Line coverage | >94% |
+| Branch coverage | >94% |
 | Ruff | ✅ Clean |
 | Mypy (strict) | ✅ Clean |
 
@@ -273,6 +274,57 @@ Subscribers (1..N async callables)
 | `test_event_bus.py` | 5 | No-subscribers, batch publishing, sync background worker, middleware execution/errors |
 | `test_event_concurrency.py` | 3 | 100 concurrent subs, 100 concurrent publishers, high-volume fire-and-forget sync |
 | `test_event_performance.py` | 3 | 1000 events throughput, 1x100 fanout latency, stable memory profile over 5K cycles |
+
+---
+
+## Milestone 5 — Pipeline Builder
+
+**Date**: 2026-07-03  
+**Status**: ✅ Complete  
+**Scope**: `app/pipeline/` — Graph-based, framework-independent pipeline builder
+
+### What Was Built
+
+| File | Purpose |
+|---|---|
+| `processors.py` | `ProcessorNode` frozen dataclass and `ProcessorRole` enum representing execution stages |
+| `models.py` | Immutable `Pipeline` dataclass containing the built graph and processor definitions |
+| `graph.py` | `PipelineGraph` internal mutable DAG manager with O(V+E) DFS cycle detection |
+| `validators.py` | Topology validation (detects empty graphs, missing roots, multiple inputs, disconnected networks) |
+| `builder.py` | Fluent `PipelineBuilder` supporting insertions, replacements, and emitting lifecycle events to the Event Bus |
+| `factory.py` | `PipelineFactory` offering pre-built templates (Voice Pipeline, Text Pipeline) |
+| `serializer.py` | `PipelineSerializer` enabling round-trip JSON serialization/deserialization |
+| `exceptions.py` | Custom exception hierarchy (`InvalidPipelineError`, `CircularDependencyError`, etc.) |
+
+### Key Design Decisions
+
+1. **Strict Immutability Boundary** — The builder mutates internal state (`_processors`, `_graph`) guarded by a `threading.Lock`. Once `build()` is called, it emits a strictly immutable `Pipeline` dataclass.
+2. **Abstract Topology over Execution** — The pipeline builder creates a purely descriptive DAG. It does NOT depend on Pipecat or execution semantics, allowing a future `PipelineRunner` to adapt the DAG to whatever execution framework is required.
+3. **Event Bus Integration** — The builder emits `PipelineCreated`, `ProcessorAdded`, `ProcessorRemoved`, `PipelineValidated`, `PipelineBuildSucceeded`, and `PipelineBuildFailed` directly to the `EventBus` implemented in Milestone 4.
+4. **Pre-Validation Guarantees** — Cycle detection runs *during* graph mutation (`add_edge`), preventing the graph from ever entering an invalid cyclic state. Final topological requirements (like single root validation) run on `build()`.
+
+### Architecture Flow
+
+```text
+PipelineBuilder
+  ↓ add_processor(), connect(), insert_before()
+PipelineGraph (DFS Cycle Detection)
+  ↓ validate()
+Validators (Topology Rules)
+  ↓ build()
+Pipeline (Immutable Data Object)
+```
+
+### Test Suite
+
+| File | Tests | Category |
+|---|---|---|
+| `test_pipeline_builder.py` | 8 | Builder API (add, remove, replace, insert_before/after, build failures) |
+| `test_pipeline_validators.py` | 4 | Topology rules (empty, no-edges, multiple inputs, multiple roots) |
+| `test_pipeline_graph.py` | 5 | DAG manipulation, orphaned edge cleanup, and DFS cycle detection |
+| `test_pipeline_models.py` | 2 | Immutability, cloning, and processor dictionary formatting |
+| `test_pipeline_factory.py` | 2 | Template structure generation (Voice & Text) |
+| `test_pipeline_serializer.py`| 1 | Full JSON round-trip |
 
 ---
 
