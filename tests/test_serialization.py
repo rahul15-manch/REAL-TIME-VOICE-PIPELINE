@@ -7,9 +7,8 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 
-import pytest
 
-from app.session import SessionManager, Session, Message, SessionState
+from app.session import Session, Message
 
 
 class TestMessageSerialization:

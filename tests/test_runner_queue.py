@@ -2,7 +2,6 @@
 Tests for ExecutionQueue.
 """
 
-import asyncio
 
 import pytest
 

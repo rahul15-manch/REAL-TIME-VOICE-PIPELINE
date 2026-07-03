@@ -14,11 +14,11 @@ Covers:
 
 from __future__ import annotations
 
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 
 import pytest
 
-from app.session.message import Message, Role, VALID_ROLES
+from app.session.message import Message, VALID_ROLES
 
 
 # ──────────────────────────────────────────────────────────────

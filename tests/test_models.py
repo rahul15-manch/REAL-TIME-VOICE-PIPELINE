@@ -7,9 +7,7 @@ from __future__ import annotations
 import json
 import re
 import time
-from datetime import datetime, timezone
 
-import pytest
 
 from app.session.models import Session
 from app.session.message import Message

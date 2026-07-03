@@ -8,9 +8,7 @@ and verifies no crashes, corrupted state, or data loss.
 from __future__ import annotations
 
 import threading
-import time
 
-import pytest
 
 from app.session import SessionManager, SessionState
 

@@ -15,7 +15,7 @@ from typing import Generator
 import pytest
 from loguru import logger
 
-from app.session import SessionManager, Session, Message, SessionState
+from app.session import SessionManager, Session
 
 
 # ──────────────────────────────────────────────────────────────────────

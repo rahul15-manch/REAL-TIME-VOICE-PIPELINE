@@ -119,7 +119,8 @@ class TestAddMessage:
 
     def test_updates_last_activity(self, manager: SessionManager, session: Session) -> None:
         old = session.last_activity
-        import time; time.sleep(0.01)
+        import time
+        time.sleep(0.01)
         manager.add_message(session.session_id, "user", "hi")
         assert session.last_activity > old
 
@@ -159,7 +160,8 @@ class TestClearHistory:
 class TestUpdateLastActivity:
     def test_updates(self, manager: SessionManager, session: Session) -> None:
         old = session.last_activity
-        import time; time.sleep(0.01)
+        import time
+        time.sleep(0.01)
         assert manager.update_last_activity(session.session_id) is True
         assert session.last_activity > old
 

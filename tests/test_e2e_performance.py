@@ -2,7 +2,6 @@
 End-to-End Performance Benchmark
 """
 
-import asyncio
 import time
 import pytest
 

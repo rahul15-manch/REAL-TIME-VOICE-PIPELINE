@@ -5,7 +5,7 @@ Tests for conversation event models and TransitionRecord.
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import datetime
 
 import pytest
 

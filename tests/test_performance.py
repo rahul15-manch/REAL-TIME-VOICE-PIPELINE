@@ -7,13 +7,12 @@ Run with: pytest tests/test_performance.py -v -s
 from __future__ import annotations
 
 import gc
-import sys
 import time
 import tracemalloc
 
 import pytest
 
-from app.session import SessionManager, SessionState
+from app.session import SessionManager
 
 
 # ──────────────────────────────────────────────────────────────
