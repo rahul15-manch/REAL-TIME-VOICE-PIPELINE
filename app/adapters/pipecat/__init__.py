@@ -15,7 +15,7 @@ from .factory import PipecatFactory
 from .lifecycle import PipecatLifecycleManager
 from .mapper import PipecatPipelineMapper
 from .processors import PipecatProcessorAdapter
-from .transport import MockWebRTCTransport, MockWebSocketTransport, PipecatTransportAdapter
+from .transport import DailyTransportAdapter, MockWebRTCTransport, MockWebSocketTransport, PipecatTransportAdapter
 from .utils import extract_pipecat_metadata
 
 __all__ = [
@@ -26,6 +26,7 @@ __all__ = [
     "PipecatPipelineMapper",
     "PipecatProcessorAdapter",
     "PipecatTransportAdapter",
+    "DailyTransportAdapter",
     "MockWebSocketTransport",
     "MockWebRTCTransport",
     "extract_pipecat_metadata",
