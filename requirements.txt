@@ -1,6 +1,12 @@
 # ──────────────────────────────────────────────────────────────
-# Real-Time Voice Pipeline — Core Dependencies
+# Real-Time Voice Pipeline — Dependencies
 # ──────────────────────────────────────────────────────────────
 
-# Logging
+# ── Pillar 1 core ──────────────────────────────────────────────
 loguru>=0.7.0
+
+# ── Pillar 2 — Real audio services (Daily + Deepgram + Groq + ElevenLabs) ──
+pipecat-ai[daily,deepgram,elevenlabs,groq]
+python-dotenv>=1.0.0
+aiohttp>=3.9.0
+deepgram-sdk>=3.0.0

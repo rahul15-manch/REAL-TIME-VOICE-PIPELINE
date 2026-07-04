@@ -23,7 +23,13 @@ def test_pipecat_event_bridge() -> None:
     bridge.on_pipeline_failed(ValueError("Pipe Error"))
     bridge.on_pipeline_completed()
     
-    assert bus._queue.qsize() == 6
+    # on_pipeline_started  → 3 events (PipelineStarted + ConversationStarted + ListeningStarted)
+    # on_processor_started → 1 event
+    # on_processor_completed → 1 event
+    # on_processor_error  → 1 event
+    # on_pipeline_failed  → 1 event
+    # on_pipeline_completed → 2 events (PipelineCompleted + ConversationEnded)
+    assert bus._queue.qsize() == 9
 
 
 def test_transports() -> None:
