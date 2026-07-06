@@ -43,7 +43,7 @@ Each milestone is logged with date, scope, decisions, and outcomes.
 | Branch coverage | >94% |
 | Ruff | ✅ Clean |
 | Mypy (strict) | ✅ Clean |
-| Real services wired | Daily.co (WebRTC) + Deepgram nova-2 + Groq llama3 + ElevenLabs |
+| Real services wired | Twilio (Telephony) + Daily.co (WebRTC) + Deepgram nova-2 (More Pillar 2 services pending) |
 
 ### Git History
 
@@ -501,7 +501,7 @@ PipecatAdapter
 
 ---
 
-## Milestone 10 — Pillar 2 Integration: Real Audio Services
+## Milestone 10 — Pillar 2 Integration (Phase 1): Twilio Telephony & Real Audio Services
 
 **Date**: 2026-07-04  
 **Status**: ✅ Complete  
@@ -513,15 +513,15 @@ This milestone wires Pillar 2 (real audio services from `cybernauts-pillar2/`) i
 
 | File | Change Type | Purpose |
 |---|---|---|
-| `app/config.py` | Implemented (was empty) | Loads all API keys from `.env` at project root — Daily, Deepgram, Groq, ElevenLabs |
+| `app/config.py` | Implemented (was empty) | Loads all API keys from `.env` at project root — Twilio, Daily, Deepgram |
 | `app/main.py` | Implemented (was empty) | Unified entry point: Session → EventBus → FSM → Pipeline DAG → Transport → Adapter → run |
 | `app/adapters/pipecat/transport.py` | Extended | Added `DailyTransportAdapter` (concrete WebRTC impl); existing mocks untouched |
-| `app/adapters/pipecat/processors.py` | Replaced factory | `create_pipecat_processor()` now returns real `DeepgramSTTService` / `GroqLLMService` / `ElevenLabsTTSService`; graceful `ImportError` fallback to mocks for CI |
+| `app/adapters/pipecat/processors.py` | Replaced factory | `create_pipecat_processor()` now returns real `TwilioTelephonyService` / `DeepgramSTTService`; graceful `ImportError` fallback to mocks for CI |
 | `app/adapters/pipecat/adapter.py` | Extended | Dual-mode build: real `pipecat.PipelineTask` when pipecat-ai installed, mock fallback for tests; added optional `fsm` param |
 | `app/adapters/pipecat/events.py` | Extended | Added optional `fsm` param + 5 new stage callbacks (`on_transcript_ready`, `on_llm_response_ready`, `on_audio_started`, `on_audio_finished`, `on_user_interrupted`); all original methods preserved |
 | `app/adapters/pipecat/factory.py` | Extended | Added optional `fsm` param — fully backward-compatible |
 | `app/adapters/pipecat/__init__.py` | Extended | Exported `DailyTransportAdapter` |
-| `requirements.txt` | Updated | Added `pipecat-ai[daily,deepgram,elevenlabs,groq]`, `python-dotenv`, `aiohttp`, `deepgram-sdk` |
+| `requirements.txt` | Updated | Added `pipecat-ai[daily,deepgram,twilio]`, `python-dotenv`, `aiohttp`, `deepgram-sdk` |
 | `.env` | New (project root) | Copied from `cybernauts-pillar2/.env` — single source of truth for all API keys |
 | `tests/test_pipecat_events.py` | Updated | Queue size assertion `6 → 9` reflecting richer event emission from `on_pipeline_started()` and `on_pipeline_completed()` |
 
@@ -556,10 +556,9 @@ app/main.py
   ├─ DailyTransportAdapter()                  → DailyTransport WebRTC (room URL from .env)
   ├─ PipecatFactory.create_adapter()          → PipecatAdapter (with FSM + EventBus wired)
   │     ├─ PipecatPipelineMapper.map_pipeline() → topological order
+  │     ├─ create_pipecat_processor(Telephony) → TwilioTelephonyService()
   │     ├─ create_pipecat_processor(STT)       → DeepgramSTTService(nova-2)
-  │     ├─ create_pipecat_processor(LLM)       → GroqLLMService(llama3-8b-8192)
-  │     ├─ create_pipecat_processor(TTS)       → ElevenLabsTTSService
-  │     └─ _build_real_pipeline_task()         → PipelineTask([Daily.input, STT, LLM, TTS, Daily.output])
+  │     └─ _build_real_pipeline_task()         → PipelineTask([Twilio.input, STT, Twilio.output])
   └─ PipecatAdapter.run()
         └─ PipecatLifecycleManager.start() → pipeline runs until transport closes
 
@@ -623,7 +622,7 @@ This milestone stabilizes the Pillar 2 integration by resolving pre-existing cor
 | File | Change Type | Purpose |
 |---|---|---|
 | `app/conversation/events.py` | Bug Fix | Resolved Python 3.13 `super()` failure in `frozen=True, slots=True` dataclass by using explicit `ConversationEvent.to_dict(self)` call. |
-| `tests/test_pipecat_processors.py` | New Tests | Unit tests for STT, LLM, TTS Pipecat processor factory, including fallback handling when `pipecat-ai` is absent. |
+| `tests/test_pipecat_processors.py` | New Tests | Unit tests for STT and Telephony Pipecat processor factory, including fallback handling when `pipecat-ai` is absent. |
 | `tests/test_pipecat_transport.py` | New Tests | Unit tests for `DailyTransportAdapter` and mock WebSocket/WebRTC components. |
 | `cybernauts-pillar2/` | Tracked | Tracked the Pillar 2 development sandbox and manual mic-testing scripts (`test_mic_stt.py`) for future reference. |
 
@@ -670,7 +669,7 @@ TEMPLATE FOR FUTURE ENTRIES — copy and fill in below this line:
 **Scope**: tests/, app/adapters/, app/pipeline/, app/main.py
 
 ### What Was Built
-- Fully integrated test suite encompassing Pillar 1 orchestration (Session, FSM, Pipeline) and Pillar 2 audio services (Deepgram, Groq, ElevenLabs).
+- Fully integrated test suite encompassing Pillar 1 orchestration (Session, FSM, Pipeline) and Pillar 2 audio services (Twilio, Deepgram).
 - Automated mock framework and generation script (`generate_tests.py`) covering 10 distinct integration endpoints.
 - Conducted End-to-End latency, memory profiling, and load tests up to 50 concurrent connections.
 - Documented findings in `milestone_11_report.md`.
