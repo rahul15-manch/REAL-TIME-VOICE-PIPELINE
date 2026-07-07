@@ -34,9 +34,9 @@ class DailyTransportAdapter(PipecatTransportAdapter):
 
     def __init__(self, room_url: str | None = None, bot_name: str | None = None) -> None:
         from app.config import DAILY_ROOM_URL, BOT_NAME
-        from pipecat.transports.services.daily import DailyTransport, DailyParams
-        from pipecat.vad.silero import SileroVADAnalyzer
-        from pipecat.vad.vad_analyzer import VADParams
+        from pipecat.transports.daily.transport import DailyTransport, DailyParams
+        from pipecat.audio.vad.silero import SileroVADAnalyzer
+        from pipecat.audio.vad.vad_analyzer import VADParams
 
         resolved_room_url = room_url or DAILY_ROOM_URL
         resolved_bot_name = bot_name or BOT_NAME
@@ -113,10 +113,10 @@ class TwilioTransportAdapter(PipecatTransportAdapter):
     """Concrete transport adapter using Twilio WebSockets (FastAPI)."""
 
     def __init__(self, websocket: Any) -> None:
-        from pipecat.transports.network.fastapi_websocket import FastAPIWebsocketTransport, FastAPIWebsocketParams
+        from pipecat.transports.websocket.fastapi import FastAPIWebsocketTransport, FastAPIWebsocketParams
         from pipecat.serializers.twilio import TwilioFrameSerializer
-        from pipecat.vad.silero import SileroVADAnalyzer
-        from pipecat.vad.vad_analyzer import VADParams
+        from pipecat.audio.vad.silero import SileroVADAnalyzer
+        from pipecat.audio.vad.vad_analyzer import VADParams
 
         self._transport = FastAPIWebsocketTransport(
             websocket=websocket,
@@ -140,3 +140,77 @@ class TwilioTransportAdapter(PipecatTransportAdapter):
     def get_pipecat_transport(self) -> Any:
         """Return the underlying FastAPIWebsocketTransport instance."""
         return self._transport
+
+
+class LiveKitTransportAdapter(PipecatTransportAdapter):
+    """Concrete transport adapter using LiveKit WebRTC."""
+
+    def __init__(self, room_url: str | None = None, token: str | None = None, bot_name: str | None = None) -> None:
+        from app.config import LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET, LIVEKIT_ROOM_NAME, BOT_NAME
+        from pipecat.transports.livekit.transport import LiveKitTransport, LiveKitParams
+        from pipecat.runner.livekit import generate_token_with_agent
+        from pipecat.audio.vad.silero import SileroVADAnalyzer
+        from pipecat.audio.vad.vad_analyzer import VADParams
+
+        resolved_url = room_url or LIVEKIT_URL
+        resolved_room_name = LIVEKIT_ROOM_NAME or "default-voice-room"
+        resolved_bot_name = bot_name or BOT_NAME
+
+        if not resolved_url:
+            raise ValueError(
+                "LIVEKIT_URL is not set. Add it to your .env file."
+            )
+        if not LIVEKIT_API_KEY or not LIVEKIT_API_SECRET:
+            raise ValueError(
+                "LIVEKIT_API_KEY and LIVEKIT_API_SECRET must be set in your .env file."
+            )
+
+        # Generate JWT token with agent permissions
+        resolved_token = token or generate_token_with_agent(
+            room_name=resolved_room_name,
+            participant_name=resolved_bot_name,
+            api_key=LIVEKIT_API_KEY,
+            api_secret=LIVEKIT_API_SECRET
+        )
+
+        self._transport = LiveKitTransport(
+            url=resolved_url,
+            token=resolved_token,
+            room_name=resolved_room_name,
+            params=LiveKitParams(
+                audio_out_enabled=True,
+                audio_in_enabled=True,
+                camera_out_enabled=False,
+                vad_enabled=True,
+                vad_analyzer=SileroVADAnalyzer(
+                    params=VADParams(
+                        confidence=0.7,
+                        start_secs=0.2,
+                        stop_secs=0.5,
+                        min_volume=0.6,
+                    )
+                ),
+            ),
+        )
+
+    def get_pipecat_transport(self) -> Any:
+        """Return the underlying LiveKitTransport instance."""
+        return self._transport
+
+    def register_events(self) -> None:
+        """Attach connection lifecycle logging to the transport."""
+
+        @self._transport.event_handler("on_joined")
+        async def on_joined(transport: Any, data: Any) -> None:
+            from loguru import logger
+            logger.info("LiveKit room joined | participant={p}", p=data)
+
+        @self._transport.event_handler("on_participant_left")
+        async def on_participant_left(transport: Any, participant: Any, reason: Any) -> None:
+            from loguru import logger
+            logger.info("Participant left LiveKit room | reason={r}", r=reason)
+
+        @self._transport.event_handler("on_error")
+        async def on_error(transport: Any, error: Any) -> None:
+            from loguru import logger
+            logger.error("LiveKit transport error: {e}", e=error)
