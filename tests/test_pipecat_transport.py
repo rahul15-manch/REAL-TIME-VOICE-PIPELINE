@@ -29,11 +29,12 @@ def test_daily_transport_missing_url():
     from unittest.mock import MagicMock
     sys.modules['pipecat'] = MagicMock()
     sys.modules['pipecat.transports'] = MagicMock()
-    sys.modules['pipecat.transports.services'] = MagicMock()
-    sys.modules['pipecat.transports.services.daily'] = MagicMock()
-    sys.modules['pipecat.vad'] = MagicMock()
-    sys.modules['pipecat.vad.silero'] = MagicMock()
-    sys.modules['pipecat.vad.vad_analyzer'] = MagicMock()
+    sys.modules['pipecat.transports.daily'] = MagicMock()
+    sys.modules['pipecat.transports.daily.transport'] = MagicMock()
+    sys.modules['pipecat.audio'] = MagicMock()
+    sys.modules['pipecat.audio.vad'] = MagicMock()
+    sys.modules['pipecat.audio.vad.silero'] = MagicMock()
+    sys.modules['pipecat.audio.vad.vad_analyzer'] = MagicMock()
     
     with pytest.raises(ValueError, match="DAILY_ROOM_URL is not set"):
         DailyTransportAdapter(room_url=None)

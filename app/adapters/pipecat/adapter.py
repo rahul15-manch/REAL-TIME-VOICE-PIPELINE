@@ -75,6 +75,8 @@ def _build_real_pipeline_task(
     # 1. Transport input (Daily mic audio) at the front
     if transport is not None:
         real_transport = transport.get_pipecat_transport()
+        if not hasattr(real_transport, "input") or not hasattr(real_transport, "output"):
+            raise ImportError("Mock transport detected (missing input/output methods)")
         processors.append(real_transport.input())
 
     # 2. Core processors (STT → LLM → TTS) from the mapper
