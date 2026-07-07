@@ -6,7 +6,7 @@
 loguru>=0.7.0
 
 # ── Pillar 2 — Real audio services (Daily + Deepgram + Groq + ElevenLabs) ──
-pipecat-ai[twilio,deepgram,elevenlabs,groq]
+pipecat-ai[twilio,daily,deepgram,elevenlabs,groq]
 fastapi>=0.100.0
 uvicorn>=0.23.0
 twilio>=8.0.0

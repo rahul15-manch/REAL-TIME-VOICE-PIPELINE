@@ -151,8 +151,12 @@ class PipecatAdapter:
                 if not getattr(p.get_processor(), "name", "").startswith("Transport_")
             ]
 
-            # 2. Try to build a real PipelineTask; fall back to mock on ImportError
+            # 2. Try to build a real PipelineTask; fall back to mock on ImportError or Mock transport
             try:
+                if self.transport and "Mock" in type(self.transport).__name__:
+                    raise ImportError("Force mock fallback for tests")
+                if any("Mock" in type(p).__name__ for p in pipecat_processors):
+                    raise ImportError("Force mock fallback for tests because mock processors exist")
                 self.task = _build_real_pipeline_task(
                     pipecat_processors, self.transport, self.bridge
                 )

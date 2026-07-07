@@ -1,5 +1,4 @@
 
-import time
 import statistics
 import platform
 from datetime import datetime

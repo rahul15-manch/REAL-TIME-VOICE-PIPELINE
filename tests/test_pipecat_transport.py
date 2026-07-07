@@ -26,7 +26,6 @@ def test_mock_webrtc_transport():
 def test_daily_transport_missing_url():
     """Test ValueError when DAILY_ROOM_URL is missing."""
     import sys
-    from unittest.mock import MagicMock
     sys.modules['pipecat'] = MagicMock()
     sys.modules['pipecat.transports'] = MagicMock()
     sys.modules['pipecat.transports.services'] = MagicMock()

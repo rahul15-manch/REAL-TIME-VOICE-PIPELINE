@@ -13,7 +13,6 @@ Usage:
 
 import asyncio
 import uuid
-import sys
 
 from loguru import logger
 from fastapi import FastAPI, WebSocket, Request
