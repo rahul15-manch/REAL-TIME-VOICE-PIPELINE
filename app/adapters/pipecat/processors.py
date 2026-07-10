@@ -78,6 +78,7 @@ def _create_real_processor(role: ProcessorRole, metadata: dict[str, Any]) -> Any
 
         stt = DeepgramSTTService(
             api_key=DEEPGRAM_API_KEY,
+            sample_rate=8000,
             settings=DeepgramSTTService.Settings(
                 model=metadata.get("model", "nova-2"),
                 language=metadata.get("language", "hi"),
