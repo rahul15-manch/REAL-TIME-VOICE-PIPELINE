@@ -11,9 +11,7 @@ from pipecat.serializers.twilio import TwilioFrameSerializer
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.audio.vad.vad_analyzer import VADParams
 
-# Make Pillar-2 imports available
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../Pillar-2/app")))
-from fastapi_websocket import FastAPIWebsocketTransport, FastAPIWebsocketParams
+from pipecat.transports.websocket.fastapi import FastAPIWebsocketTransport, FastAPIWebsocketParams
 
 
 class PipecatTransportAdapter(abc.ABC):
