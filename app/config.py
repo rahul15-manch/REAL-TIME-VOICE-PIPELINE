@@ -44,3 +44,9 @@ BOT_NAME: str = os.getenv("BOT_NAME", "Cybernauts Agent")
 TRANSPORT_MODE: str = os.getenv("TRANSPORT_MODE", "livekit") # "twilio", or "livekit"
 TWILIO_ACCOUNT_SID: str = os.getenv("TWILIO_ACCOUNT_SID", "")
 TWILIO_AUTH_TOKEN: str = os.getenv("TWILIO_AUTH_TOKEN", "")
+
+# ── Database (Neon PostgreSQL) ──────────────────────────────────────────
+DATABASE_URL: str = os.getenv("DATABASE_URL", "postgresql+asyncpg://user:pass@localhost:5432/voice_db")
+DATABASE_POOL_SIZE: int = int(os.getenv("DATABASE_POOL_SIZE", "5"))
+DATABASE_MAX_OVERFLOW: int = int(os.getenv("DATABASE_MAX_OVERFLOW", "10"))
+DATABASE_POOL_TIMEOUT: int = int(os.getenv("DATABASE_POOL_TIMEOUT", "30"))

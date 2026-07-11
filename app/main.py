@@ -50,6 +50,12 @@ async def handle_inbound_call(request: Request):
     global_timers["webhook_processing_start"] = time.perf_counter()
     logger.info("Incoming Twilio call received")
     
+    # Extract phone number
+    form_data = await request.form()
+    phone_number = form_data.get("From", "unknown_client")
+    import urllib.parse
+    phone_encoded = urllib.parse.quote(phone_number)
+    
     # Resolve the host for the websocket stream
     host = request.headers.get("host", "localhost:8000")
     
@@ -59,7 +65,7 @@ async def handle_inbound_call(request: Request):
     twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
 <Response>
     <Connect>
-        <Stream url="{scheme}://{host}/ws" />
+        <Stream url="{scheme}://{host}/ws?phone={phone_encoded}" />
     </Connect>
 </Response>
 """
@@ -97,22 +103,71 @@ async def websocket_endpoint(websocket: WebSocket):
     
     transport = TwilioTransportAdapter(websocket=websocket, stream_sid=stream_sid)
     
+    # Extract phone number from URL query
+    phone_number = websocket.query_params.get("phone", "unknown_client")
+    
     # Block and run the voice session on this websocket
-    await run_voice_session(transport=transport)
+    await run_voice_session(transport=transport, phone_number=phone_number)
 
 
 # ── Core Pipeline Session ───────────────────────────────────────────────
-async def run_voice_session(transport=None) -> None:
+async def run_voice_session(transport=None, phone_number: str = "unknown_client") -> None:
     """Bootstrap and execute a single real-time voice session."""
+
+    # ── Database Persistence: Lookup Client & Summary ───────────────────
+    from app.db.connection import db_manager
+    from app.repositories.client_repository import ClientRepository
+    from app.repositories.session_repository import SessionRepository
+
+    client_id_str = ""
+    previous_summary = ""
+
+    async with db_manager.get_session() as db:
+        client = await ClientRepository.get_or_create_client(db, phone_number)
+        client_id_str = str(client.id)
+        
+        summary_text = await SessionRepository.get_summary(db, client.id)
+        if summary_text:
+            previous_summary = summary_text
 
     # ── 1. Session ──────────────────────────────────────────────────────
     session_manager = SessionManager()
-    session = session_manager.create_session()
+    session = session_manager.create_session(metadata={
+        "client_id": client_id_str,
+        "previous_summary": previous_summary
+    })
     session_id = session.session_id
-    logger.info("Session created | session_id={sid}", sid=session_id)
+    logger.info("Session created | session_id={sid} | client={client}", sid=session_id, client=phone_number)
+    
+    # Persist the Session in DB
+    async with db_manager.get_session() as db:
+        await SessionRepository.create_session(db, session_id, client.id)
 
     # ── 2. Event Bus ────────────────────────────────────────────────────
     event_bus = EventBus()
+    
+    # Subscribe to SessionClosed for DB Persistence
+    @event_bus.subscribe(SessionClosed)
+    async def on_session_closed(event: SessionClosed) -> None:
+        async with db_manager.get_session() as db_session:
+            sess_data = session_manager.get_session(event.session_id)
+            if not sess_data:
+                return
+            
+            c_id_str = sess_data.metadata.get("client_id")
+            if c_id_str:
+                import uuid
+                c_id = uuid.UUID(c_id_str)
+                
+                # Mock LLM Summary Generation (in real prod, call an LLM API here with transcript)
+                history_texts = [msg.content for msg in sess_data.history if msg.role != "system"]
+                transcript = " | ".join(history_texts)
+                generated_summary = f"Summary of call ({len(history_texts)} turns): {transcript[:500]}..."
+                
+                await SessionRepository.save_summary(db_session, c_id, generated_summary)
+                await SessionRepository.close_session(db_session, event.session_id, int(sess_data.duration_seconds))
+                logger.info("Persisted call summary and closed DB session for {sid}", sid=event.session_id)
+                
     await event_bus.start()
     event_bus.publish_sync(SessionCreated(session_id=session_id))
     logger.info("EventBus started")

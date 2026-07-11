@@ -101,9 +101,19 @@ def _build_real_pipeline_task(
         from pipecat.turns.user_stop.speech_timeout_user_turn_stop_strategy import SpeechTimeoutUserTurnStopStrategy
         from pipecat.processors.aggregators.llm_response_universal import LLMUserAggregatorParams
 
+        session_id = bridge.session_id
+        from app.session.manager import SessionManager
+        sm = SessionManager()
+        sess = sm.get_session(session_id)
+        prev_summary = sess.metadata.get("previous_summary", "") if sess else ""
+        
+        system_content = VOICE_SYSTEM_PROMPT + "\n\n" + get_faq_context_block()
+        if prev_summary:
+            system_content += "\n\nPrevious Conversation Summary for this caller:\n" + prev_summary
+
         context = LLMContext(
               messages=[
-                 {"role": "system", "content": VOICE_SYSTEM_PROMPT + "\n\n" + get_faq_context_block()}
+                 {"role": "system", "content": system_content}
                ]
             )
         
