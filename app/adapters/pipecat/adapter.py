@@ -81,7 +81,7 @@ def _build_real_pipeline_task(
     import time
 
     # 1. Prepare context for Pillar 3 FAQ & Caller Persistence
-    session_id = bridge.session_id
+    session_id = bridge._session_id
     from app.session.manager import SessionManager
     sm = SessionManager()
     sess = sm.get_session(session_id)
