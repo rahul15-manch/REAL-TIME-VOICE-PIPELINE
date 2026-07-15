@@ -101,10 +101,10 @@ def _build_real_pipeline_task(
         from pipecat.turns.user_stop.speech_timeout_user_turn_stop_strategy import SpeechTimeoutUserTurnStopStrategy
         from pipecat.processors.aggregators.llm_response_universal import LLMUserAggregatorParams
 
-        session_id = bridge.session_id
+        session_id = bridge._session_id
         from app.session.manager import SessionManager
         sm = SessionManager()
-        sess = sm.get_session(session_id)
+        sess = sm._sessions.get(session_id)
         prev_summary = sess.metadata.get("previous_summary", "") if sess else ""
         
         system_content = VOICE_SYSTEM_PROMPT + "\n\n" + get_faq_context_block()
@@ -290,27 +290,53 @@ class PipecatAdapter:
             
             import os
             import asyncio
+            import wave
             if os.getenv("ENABLE_INITIAL_GREETING", "True").lower() == "true":
-                from pipecat.frames.frames import LLMMessagesAppendFrame
+                from pipecat.frames.frames import LLMMessagesAppendFrame, OutputAudioRawFrame, BotStoppedSpeakingFrame
                 from app.events.event_types import AssistantGreetingStarted
                 
-                logger.bind(session_id=self.session_id).info("Queueing initial AI greeting")
+                logger.bind(session_id=self.session_id).info("Queueing initial direct audio greeting")
                 
                 self.event_bus.publish_sync(
                     AssistantGreetingStarted(session_id=self.session_id)
                 )
 
                 # Delay greeting to allow Twilio audio to fully connect
-                await asyncio.sleep(2.0)
-                await self.task.queue_frames([
+                await asyncio.sleep(0.5)
+                
+                # 1. Read pre-recorded WAV file and queue raw PCM frames directly to skip TTS
+                frames_to_queue = []
+                try:
+                    with wave.open("greetings.wav", "rb") as wf:
+                        sample_rate = wf.getframerate()
+                        num_channels = wf.getnchannels()
+                        chunk_frames = int(sample_rate * 0.1)  # 100ms chunks
+                        while True:
+                            data = wf.readframes(chunk_frames)
+                            if not data:
+                                break
+                            frames_to_queue.append(
+                                OutputAudioRawFrame(audio=data, sample_rate=sample_rate, num_channels=num_channels)
+                            )
+                except Exception as e:
+                    logger.error(f"Failed to read greetings.wav: {e}")
+                
+                # 2. Add LLM message to maintain conversation context (bot remembers it spoke)
+                frames_to_queue.append(
                     LLMMessagesAppendFrame(
                         messages=[{
-                            "role": "system",
-                            "content": "A new phone conversation has just started. You are Sarah from Cybernauts Noida. Say exactly: 'Hello, I'm Sarah from Cybernauts Noida. How can I assist you?'"
+                            "role": "assistant",
+                            "content": "Hello, I'm Sarah from Cybernauts Noida. How can I assist you?"
                         }],
-                        run_llm=True
+                        run_llm=False
                     )
-                ])
+                )
+                
+                # 3. Tell the mute strategy that the bot has finished speaking its first utterance
+                #    so it un-mutes the user's microphone to allow LLM interaction.
+                frames_to_queue.append(BotStoppedSpeakingFrame())
+                
+                await self.task.queue_frames(frames_to_queue)
 
             # For the mock task: manually simulate processor events
             if isinstance(self.task, MockPipecatPipelineTask):
