@@ -21,8 +21,8 @@ def build_vad_analyzer() -> SileroVADAnalyzer:
     return SileroVADAnalyzer(
         params=VADParams(
             confidence=0.7,
-            start_secs=0.2,     
-            stop_secs=0.4,      
-            min_volume=0.6,
+            start_secs=0.1,     # Faster start detection
+            stop_secs=0.2,      # Reduced from 0.4
+            min_volume=0.01,
         )
     )

@@ -11,6 +11,10 @@ class LanguageRoutingProcessor(FrameProcessor):
     """
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
+<<<<<<< Updated upstream
+=======
+        self.shared_state = shared_state if shared_state is not None else {}
+>>>>>>> Stashed changes
         self.HINDI_INDICATORS = {
             'hai', 'mujhe', 'kya', 'kaise', 'chahiye', 'mera', 'namaste', 'nahi', 
             'haan', 'ko', 'se', 'mein', 'liye', 'karna', 'kar', 
@@ -25,6 +29,18 @@ class LanguageRoutingProcessor(FrameProcessor):
         if isinstance(frame, TranscriptionFrame) and frame.text and not frame.user_id == "bot":
             text = frame.text.lower()
             
+<<<<<<< Updated upstream
+=======
+            # --- Check for Goodbye phrases ---
+            clean_text = re.sub(r'[^\w\s]', '', text.strip())
+            closing_phrases = ["bye", "goodbye", "good bye", "alvida", "thank you", "thanks", "that is all", "thats all", "bas itna hi", "theek hai", "end call", "disconnect"]
+            
+            if len(clean_text.split()) <= 8 and any(phrase in clean_text for phrase in closing_phrases):
+                logger.info(f"LanguageRoutingProcessor: User said goodbye ('{frame.text}'). Will terminate after bot replies.")
+                self.shared_state["hangup_requested"] = True
+            
+            # --- Language Detection ---
+>>>>>>> Stashed changes
             # Check for explicit Devanagari script
             devanagari_count = len(re.findall(r'[\u0900-\u097F]', text))
             has_devanagari = devanagari_count > 10
@@ -52,6 +68,7 @@ class CallTerminationProcessor(FrameProcessor):
     """
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
+<<<<<<< Updated upstream
         self._hangup_requested = False
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
@@ -72,11 +89,32 @@ class CallTerminationProcessor(FrameProcessor):
             if len(clean_text.split()) <= 8 and any(phrase in clean_text for phrase in closing_phrases):
                 logger.info(f"CallTerminationProcessor: User said goodbye ('{frame.text}'). Will terminate after bot replies.")
                 self._hangup_requested = True
+=======
+        self.shared_state = shared_state if shared_state is not None else {}
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection):
+        await super().process_frame(frame, direction)
+        from pipecat.frames.frames import TTSStoppedFrame, EndFrame, TextFrame, AudioRawFrame
+>>>>>>> Stashed changes
         
+        # Log frame types (skip spammy ones)
+        if not isinstance(frame, (AudioRawFrame, TextFrame)):
+            logger.debug(f"CallTerminationProcessor received: {type(frame).__name__} | hangup_requested={self.shared_state.get('hangup_requested', False)}")
+            
         await self.push_frame(frame, direction)
         
+<<<<<<< Updated upstream
         # 2. When bot finishes its response, if hangup requested, queue EndFrame
         if isinstance(frame, LLMFullResponseEndFrame) and self._hangup_requested:
             logger.info("CallTerminationProcessor: Bot finished responding to goodbye. Pushing EndFrame to terminate the call.")
             await self.push_frame(EndFrame(), direction)
             self._hangup_requested = False
+=======
+        # When bot finishes its response, if hangup requested, queue EndFrame
+        if isinstance(frame, TTSStoppedFrame):
+            logger.info(f"CallTerminationProcessor saw TTSStoppedFrame. state: {self.shared_state}")
+            if self.shared_state.get("hangup_requested"):
+                logger.warning("CallTerminationProcessor: Bot finished responding to goodbye. Pushing EndFrame to terminate the call.")
+                await self.push_frame(EndFrame(), direction)
+                self.shared_state["hangup_requested"] = False
+>>>>>>> Stashed changes
