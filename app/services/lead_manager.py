@@ -5,13 +5,14 @@ from loguru import logger
 
 LEADS_FILE = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "leads.json"))
 
-async def save_lead_tool_callback(function_name, tool_call_id, args, llm, context, result_callback):
+async def save_lead(params, name: str, phone: str):
     """
-    Callback for Pipecat function calling. Extracts name and phone, saves to JSON.
+    Capture the user's name and phone number to schedule a free consultation or when they show high interest in our services.
+
+    Args:
+        name: The user's full name.
+        phone: The user's phone number.
     """
-    name = args.get("name", "Unknown")
-    phone = args.get("phone", "Unknown")
-    
     logger.info(f"ACTIONABLE AI: Triggered 'save_lead' tool! Name: {name}, Phone: {phone}")
     
     lead_entry = {
@@ -36,8 +37,10 @@ async def save_lead_tool_callback(function_name, tool_call_id, args, llm, contex
         logger.info(f"Lead saved successfully to {LEADS_FILE}")
         
         # Return success back to the LLM so it can inform the user
-        await result_callback({"status": "success", "message": "Lead saved successfully."})
+        if getattr(params, "result_callback", None):
+            await params.result_callback({"status": "success", "message": "Lead saved successfully."})
         
     except Exception as e:
         logger.error(f"Failed to save lead: {e}")
-        await result_callback({"status": "error", "message": "Failed to save lead."})
+        if getattr(params, "result_callback", None):
+            await params.result_callback({"status": "error", "message": "Failed to save lead."})

@@ -119,27 +119,9 @@ def _build_real_pipeline_task(
             from pipecat.frames.frames import EndFrame
             await task.queue_frames([EndFrame()])
 
-        from app.services.lead_manager import save_lead_tool_callback
+        from app.services.lead_manager import save_lead
         
-        llm.register_function("save_lead", save_lead_tool_callback)
-        
-        tools = [
-            {
-                "type": "function",
-                "function": {
-                    "name": "save_lead",
-                    "description": "Capture the user's name and phone number to schedule a free consultation or when they show high interest in our services.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "name": {"type": "string", "description": "The user's full name."},
-                            "phone": {"type": "string", "description": "The user's phone number."}
-                        },
-                        "required": ["name", "phone"]
-                    }
-                }
-            }
-        ]
+        tools = [save_lead]
 
         context = LLMContext(
               messages=[
