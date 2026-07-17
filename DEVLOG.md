@@ -676,3 +676,17 @@ Validate that a returning caller is correctly identified using the stored phone 
 ### Lessons Learned
 - The `get_or_create_client` pattern works efficiently and prevents duplicates when correctly combined with database unique constraints and indexed lookups.
 - Utilizing `AsyncSession` context managers ensures clean database connections and transaction management even in testing scenarios.
+
+---
+
+## LLM Prompts & Lead Capture Refinement
+**Date**: 2026-07-17
+**Status**: ✅ Complete
+
+### Overview
+Updated the conversational AI prompts, FAQ, and knowledge base to improve the lead capture workflow. Refined the save_lead tool description to prevent premature triggering and enforce capturing the user's real name and phone number instead of directing them to WhatsApp or Email.
+
+### Actions Taken
+- **System Prompts Updated**: Modified pp/llm/prompts.py to instruct the AI to actively ask for the user's Name and Phone number and trigger the save_lead tool immediately after receiving them.
+- **FAQ & Knowledge Base Overhaul**: Updated pp/llm/company_faq.py and pp/llm/knowledge_base.json to stop providing email or WhatsApp numbers. Instead, the AI is now strictly instructed to ask for contact details and arrange a callback.
+- **Tool Instruction Refined**: Improved the docstring and instructions for the save_lead tool in pp/services/lead_manager.py so it only triggers when actual names and phone numbers are provided, preventing dummy values.
