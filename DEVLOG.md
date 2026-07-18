@@ -722,7 +722,7 @@ This closes the gap between the mock summary generation and the real, production
 ---
 
 
-## LLM Prompts & Lead Capture Refinement
+## Milestone — Pillar 2: Lead Capture Refinement
 **Date**: 2026-07-17
 **Status**: ✅ Complete
 
@@ -736,7 +736,7 @@ Updated the conversational AI prompts, FAQ, and knowledge base to improve the le
 
 ---
 
-## Multi-Language Support & Latency Optimizations
+## Milestone — Pillar 2: Multi-Language Support & Latency Optimizations
 **Date**: 2026-07-17
 **Status**: ✅ Complete
 
@@ -782,4 +782,18 @@ Conversation summaries generated at call-end were always generic ("no conversati
 - Instantiating a manager/service class fresh in multiple places (instead of passing a shared instance) silently breaks state continuity when the backing store is in-memory — this is easy to miss because no exception is raised, the code just quietly operates on an empty store.
 - Cancelling a background worker right after publishing to its queue is a classic race condition — always drain or await pending work before teardown.
 
+
+
+
+## Milestone — Pillar 2: Dynamic Audio Harmonization & Transport Selection
+**Date**: 2026-07-18
+**Status**: ✅ Complete
+
+### Overview
+Standardized the audio pipeline so that both Twilio (telephony) and LiveKit (WebRTC) can share the exact same underlying pipeline without sample rate mismatches or garbled audio, effectively finalizing the multi-transport integration.
+
+### Actions Taken
+- **Dynamic Sample Rate Switching**: Modified the Pipecat processor factories (`app/adapters/pipecat/processors.py` and `Pillar_2/pipeline.py`) to dynamically pull `TRANSPORT_MODE` from the environment configuration.
+- **Transport Alignment**: Automatically enforces `16000Hz` when `TRANSPORT_MODE=livekit` to support wideband WebRTC audio, and `8000Hz` when `TRANSPORT_MODE=twilio` to align with the `TwilioFrameSerializer` and PSTN telephony limitations.
+- **Perfect Multi-Language Support on Twilio**: Verified that the English, Hindi, and Hinglish STT/TTS routing perfectly inherits these dynamically adjusted audio constraints, meaning all features work natively across both transports seamlessly.
 

@@ -124,6 +124,10 @@ It provides an orchestration framework capable of handling streaming audio and b
 | TTS Integration | ✅ |
 | Lead Capture & Tools | ✅ |
 | Runtime Validation | ✅ |
+| Pillar 2: Lead Capture Refinement | ✅ |
+| Pillar 2: Multi-Language Support | ✅ |
+| Pillar 2: Dynamic Audio Harmonization | ✅ |
+| Pillar 3: Memory Summary Tracking | ✅ |
 
 ## 8. Benchmark Summary
 
