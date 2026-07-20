@@ -97,19 +97,16 @@ async def handle_inbound_call(request: Request):
     else:
         host = request.headers.get("host", "localhost:8000")
         scheme = "wss" if "ngrok" in host or request.headers.get("x-forwarded-proto") == "https" else "ws"
-        stream_url = f"{scheme}://{host}/ws?phone={phone_encoded}&client_id={client_id_str}"
-    
-    # Note: We NO LONGER append company_context or previous_summary to the stream_url 
-    # to avoid exceeding Twilio's 255-character limit for the <Stream url> attribute.
-    # They are fetched natively inside the websocket handler.
-    
-    # Escape ampersands for valid XML
-    stream_url_xml = stream_url.replace("&", "&amp;")
+    # Use custom parameters instead of query string to avoid Twilio stripping them
+    stream_url = public_url.replace("http://", "ws://").replace("https://", "wss://") + "/ws"
     
     twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
 <Response>
     <Connect>
-        <Stream url="{stream_url_xml}" />
+        <Stream url="{stream_url}">
+            <Parameter name="phone" value="{phone_number}" />
+            <Parameter name="client_id" value="{client_id_str}" />
+        </Stream>
     </Connect>
 </Response>
 """
@@ -133,8 +130,15 @@ async def websocket_endpoint(websocket: WebSocket):
         msg = json.loads(data)
         if msg.get("event") == "start":
             stream_sid = msg["start"]["streamSid"]
+            
+            # Extract custom parameters from the start event
+            custom_params = msg["start"].get("customParameters", {})
+            phone_number = custom_params.get("phone", "unknown_client")
+            client_id_str = custom_params.get("client_id", "")
+            company_context = custom_params.get("company_context", "")
+            
             global_timers["first_audio_packet"] = time.perf_counter()
-            logger.info(f"Twilio stream started: {stream_sid}")
+            logger.info(f"Twilio stream started: {stream_sid} | phone: {phone_number}")
             break
         elif msg.get("event") == "connected":
             logger.info("Twilio connected event received")
@@ -146,11 +150,6 @@ async def websocket_endpoint(websocket: WebSocket):
         return
     
     transport = TwilioTransportAdapter(websocket=websocket, stream_sid=stream_sid)
-    
-    # Extract params from URL query (P1 Fix)
-    phone_number = websocket.query_params.get("phone", "unknown_client")
-    client_id_str = websocket.query_params.get("client_id", "")
-    company_context = websocket.query_params.get("company_context", "")
     
     # ── Database Pre-fetch (Moved from handle_inbound_call) ──
     previous_summary = ""
