@@ -21,6 +21,7 @@ class PipecatFactory:
         execution_id: str,
         transport: Optional[PipecatTransportAdapter] = None,
         fsm: Optional[Any] = None,
+        latency_tracker: Optional[Any] = None,
     ) -> PipecatAdapter:
         """Create and return a configured PipecatAdapter.
 
@@ -33,6 +34,7 @@ class PipecatFactory:
                           in production, MockWebRTCTransport in tests).
             fsm:          Optional ConversationStateMachine.  When provided,
                           the adapter drives FSM state on each pipeline stage.
+            latency_tracker: Optional tracker for latency metrics.
         """
         return PipecatAdapter(
             pipeline=pipeline,
@@ -41,4 +43,5 @@ class PipecatFactory:
             execution_id=execution_id,
             transport=transport,
             fsm=fsm,
+            latency_tracker=latency_tracker,
         )

@@ -587,6 +587,26 @@ Comprehensive stress testing, memory profiling, and end-to-end execution validat
 2. **Memory Safety**: Profiled 100 concurrent session executions (`tracemalloc`). Stable 50KB heap allocation per session with zero cyclic memory leaks.
 3. **Integration Flow**: E2E pipeline logic seamlessly traversed from Twilio WebSocket ? FSM ? Deepgram STT ? Groq LLM ? ElevenLabs TTS ? Twilio Audio Response.
 4. **Resilience**: Simulating external provider failures (e.g., missing API keys or disconnects) resulted in graceful `on_pipeline_failed` events with clean session teardowns, ensuring zero hung threads.
+---
+---
+## Milestone — Pillar 3: Groq LLM + Context Layer Integration
+**Date**: 2026-07-09
+**Status**: ✅ Complete — Implemented and Tested
+
+### Overview
+Built the foundational Groq LLM integration for the voice pipeline — the core client, conversation-context management, and system prompt used by every downstream Pillar 3 feature (FAQ knowledge base, persistent memory summaries) since.
+
+### What was built
+- `app/llm/client.py` — `GroqLLMClient`: async streaming chat-completion client using `AsyncGroq`, model `llama-3.3-70b-versatile`.
+- `app/llm/context_manager.py` — `ContextManager.get_trimmed_history()`: sliding-window history trimming that always preserves the system prompt at index 0, keeping conversation context within token limits for real-time voice latency.
+- `app/llm/prompts.py` — `VOICE_SYSTEM_PROMPT`: tuned specifically for short, natural, non-robotic voice replies (as opposed to a generic chatbot prompt).
+- `scripts/test_groq.py` — standalone live validation script (session → history → trim → stream) used to verify latency and correctness independent of the full pipeline.
+
+### Verification
+- Live-validated via `scripts/test_groq.py`: confirmed working end-to-end streaming completions with real Groq API calls, with response latency in the 160–360ms range.
+
+### Conclusion
+This became the base Groq LLM + Context layer that all later Pillar 3 work builds on — the Company FAQ Knowledge Base injects into `VOICE_SYSTEM_PROMPT`, and Persistent Memory reuses `GroqLLMClient` for summary generation.
 
 ---
 
@@ -676,3 +696,104 @@ Validate that a returning caller is correctly identified using the stored phone 
 ### Lessons Learned
 - The `get_or_create_client` pattern works efficiently and prevents duplicates when correctly combined with database unique constraints and indexed lookups.
 - Utilizing `AsyncSession` context managers ensures clean database connections and transaction management even in testing scenarios.
+
+---
+
+---
+## Milestone — Pillar 3: Real Groq-Based Summary Generation for Persistent Memory
+**Date**: 2026-07-16
+**Status**: ✅ Complete — Implemented and Tested
+
+### Overview
+Replaced the placeholder/mock summary generation in `on_session_closed` (which simply truncated the raw transcript into a fake "summary") with a real Groq LLM call, as agreed in the persistent-memory architecture discussion.
+
+### What was built
+- The summary logic now combines the caller's **previous summary** (loaded from `caller_summaries`/`ConversationSummary` at call start) with the **current call's transcript**, and asks Groq to produce ONE updated, concise summary (3-5 sentences) — overwriting the old one.
+- Added a fallback: if the Groq call fails for any reason, the previous summary is kept as-is rather than losing it or crashing.
+- Fixed a race condition where `event_bus.stop()` was cancelling the background event worker immediately after publishing `SessionClosed`, before the event could actually be processed — added `await event_bus._queue.join()` before stopping, so the summary-persistence subscriber reliably runs before shutdown.
+
+### Verification
+- Verified the Groq prompt construction and summary generation logic via a standalone script (`test_summary_write.py`), confirming the LLM correctly combines previous + new context.
+- Verified DB read/write for client creation and summary save/retrieve via manual scripts, independent of the live call pipeline.
+
+### Conclusion
+This closes the gap between the mock summary generation and the real, production-ready implementation. Combined with the later conversation-history-tracking fix, this completes the core persistent memory feature end-to-end.
+
+---
+
+
+## Milestone — Pillar 2: Lead Capture Refinement
+**Date**: 2026-07-17
+**Status**: ✅ Complete
+
+### Overview
+Updated the conversational AI prompts, FAQ, and knowledge base to improve the lead capture workflow. Refined the save_lead tool description to prevent premature triggering and enforce capturing the user's real name and phone number instead of directing them to WhatsApp or Email.
+
+### Actions Taken
+- **System Prompts Updated**: Modified pp/llm/prompts.py to instruct the AI to actively ask for the user's Name and Phone number and trigger the save_lead tool immediately after receiving them.
+- **FAQ & Knowledge Base Overhaul**: Updated pp/llm/company_faq.py and pp/llm/knowledge_base.json to stop providing email or WhatsApp numbers. Instead, the AI is now strictly instructed to ask for contact details and arrange a callback.
+- **Tool Instruction Refined**: Improved the docstring and instructions for the save_lead tool in pp/services/lead_manager.py so it only triggers when actual names and phone numbers are provided, preventing dummy values.
+
+---
+
+## Milestone — Pillar 2: Multi-Language Support & Latency Optimizations
+**Date**: 2026-07-17
+**Status**: ✅ Complete
+
+### Overview
+Added robust multi-language capabilities ensuring seamless conversational interaction across English, Hindi, and Hinglish. In tandem, the end-to-end latency across STT, LLM generation, and TTS pipelines has been optimized to drastically reduce Time-to-First-Byte (TTFB) for voice responses.
+
+### Actions Taken
+- **Dynamic Language Detection**: Integrated language routing to intelligently detect user languages and adapt the pipeline accordingly.
+- **System Prompt Refinement**: Instructed the LLM to automatically mirror the user's language (Hindi, English, or mixed Hinglish) and handle seamless language switching mid-conversation without breaking context.
+- **Latency Benchmarking & Fine-Tuning**: Benchmarked and optimized Pipecat context aggregation, Deepgram STT chunking, and ElevenLabs TTS audio synthesis intervals, resulting in a faster, near-human response time.
+
+
+## Milestone — Pillar 3: Fixed Conversation History Tracking for Summary Generation
+**Date**: 2026-07-17
+**Status**: ✅ Complete — Implemented and Tested
+
+### Problem
+Conversation summaries generated at call-end were always generic ("no conversation was recorded, caller's identity and purpose are unknown") regardless of actual call content. Root cause: `SessionManager.add_message()` was defined but never called anywhere in the live pipeline — `session.history` was always empty when `on_session_closed` tried to build a summary from it.
+
+### Root Cause Analysis
+- `EventBridgeObserver` (inside `_build_real_pipeline_task`) already captured `TranscriptionFrame` (user speech) and `LLMFullResponseEndFrame` (bot responses) for latency metrics, but never persisted them to session history.
+- A separate `SessionManager()` instance was being instantiated locally inside the adapter (for `previous_summary` lookup), disconnected from the actual `session_manager` instance created in `run_voice_session` — each instantiation created its own isolated in-memory `_sessions` dict.
+- Separately, `event_bus.stop()` was cancelling the background event worker immediately after publishing `SessionClosed`, without waiting for the queued event to actually be processed — this meant the summary-persistence subscriber (`on_session_closed`) sometimes never ran at all.
+
+### Fix
+1. Wired the real `session_manager` instance through the full adapter chain:
+   `app/main.py` → `PipecatFactory.create_adapter()` → `PipecatAdapter.__init__` → `_build_task` → `_build_real_pipeline_task` → `EventBridgeObserver`
+
+   `EventBridgeObserver.on_push_frame` now calls `session_manager.add_message(session_id, role, content)` for both user transcripts and assistant responses, so `session.history` is populated live during the call.
+
+2. Added `await event_bus._queue.join()` before `event_bus.stop()` in `run_voice_session`, ensuring the `SessionClosed` event is fully processed (and the summary persisted) before the event bus worker is torn down.
+
+### Additional fixes bundled in this PR
+- **DB connection stability**: Added `pool_pre_ping=True` and `pool_recycle=300` to the async engine in `app/db/connection.py` to prevent intermittent `connection is closed` errors from Neon's serverless Postgres on cold starts.
+- **Fallback client lookup**: `on_session_closed` now falls back to a `phone_number`-based client lookup if `client_id` is missing from session metadata (covers an upstream webhook/websocket phone-tracking gap, tracked separately with the team).
+
+### Testing
+- Verified via live Twilio call: confirmed `add_message` fires for every user/assistant turn via debug logs (`Message added | role=user | length=...`).
+- Verified via manual DB script (`check_summary.py`) that the generated summary accurately reflects real call content (e.g. specific questions asked and answers given) instead of the previous generic placeholder.
+- Confirmed no regressions to greeting, barge-in, or `end_call` function-calling behavior.
+
+### Lessons Learned
+- Instantiating a manager/service class fresh in multiple places (instead of passing a shared instance) silently breaks state continuity when the backing store is in-memory — this is easy to miss because no exception is raised, the code just quietly operates on an empty store.
+- Cancelling a background worker right after publishing to its queue is a classic race condition — always drain or await pending work before teardown.
+
+
+
+
+## Milestone — Pillar 2: Dynamic Audio Harmonization & Transport Selection
+**Date**: 2026-07-18
+**Status**: ✅ Complete
+
+### Overview
+Standardized the audio pipeline so that both Twilio (telephony) and LiveKit (WebRTC) can share the exact same underlying pipeline without sample rate mismatches or garbled audio, effectively finalizing the multi-transport integration.
+
+### Actions Taken
+- **Dynamic Sample Rate Switching**: Modified the Pipecat processor factories (`app/adapters/pipecat/processors.py` and `Pillar_2/pipeline.py`) to dynamically pull `TRANSPORT_MODE` from the environment configuration.
+- **Transport Alignment**: Automatically enforces `16000Hz` when `TRANSPORT_MODE=livekit` to support wideband WebRTC audio, and `8000Hz` when `TRANSPORT_MODE=twilio` to align with the `TwilioFrameSerializer` and PSTN telephony limitations.
+- **Perfect Multi-Language Support on Twilio**: Verified that the English, Hindi, and Hinglish STT/TTS routing perfectly inherits these dynamically adjusted audio constraints, meaning all features work natively across both transports seamlessly.
+

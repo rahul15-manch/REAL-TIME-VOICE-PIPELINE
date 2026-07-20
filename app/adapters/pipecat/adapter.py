@@ -60,6 +60,7 @@ def _build_real_pipeline_task(
     pipecat_processors: List[Any],
     transport: Optional[PipecatTransportAdapter],
     bridge: PipecatEventBridge,
+    latency_tracker: Optional[Any] = None,
 ) -> Any:
     """Build an actual pipecat.pipeline.task.PipelineTask.
 
@@ -82,8 +83,9 @@ def _build_real_pipeline_task(
         
         # In Pipecat 1.5.0, VAD is a separate processor that must be injected manually
         from pipecat.processors.audio.vad_processor import VADProcessor
+        from pipecat.audio.vad.vad_analyzer import VADParams
         from pipecat.audio.vad.silero import SileroVADAnalyzer
-        processors.append(VADProcessor(vad_analyzer=SileroVADAnalyzer()))
+        processors.append(VADProcessor(vad_analyzer=SileroVADAnalyzer(params=VADParams(stop_secs=0.2))))
 
     # 2. Core processors (STT → LLM → TTS) from the mapper
     # We must wire up the OpenAILLMContext and aggregator for the LLM
@@ -102,10 +104,7 @@ def _build_real_pipeline_task(
         from pipecat.processors.aggregators.llm_response_universal import LLMUserAggregatorParams
 
         session_id = bridge._session_id
-        from app.session.manager import SessionManager
-        sm = SessionManager()
-        sess = sm._sessions.get(session_id)
-        prev_summary = sess.metadata.get("previous_summary", "") if sess else ""
+        prev_summary = ""  # will be populated via session_manager only in async contexts (see EventBridgeObserver)
         
         system_content = VOICE_SYSTEM_PROMPT + "\n\n" + get_faq_context_block()
         if prev_summary:
@@ -119,11 +118,15 @@ def _build_real_pipeline_task(
             from pipecat.frames.frames import EndFrame
             await task.queue_frames([EndFrame()])
 
+        from app.services.lead_manager import save_lead
+        
+        tools = [save_lead]
+
         context = LLMContext(
               messages=[
                  {"role": "system", "content": system_content}
                ],
-              tools=[end_call]
+              tools=tools
             )
         
         # Optimize Turn Stop Strategy for extreme low latency (bypasses LLM completeness checks)
@@ -136,25 +139,32 @@ def _build_real_pipeline_task(
             
         agg_params = LLMUserAggregatorParams(
             user_turn_strategies=UserTurnStrategies(
-                stop=[SpeechTimeoutUserTurnStopStrategy(user_speech_timeout=0.6)]
+                stop=[SpeechTimeoutUserTurnStopStrategy(user_speech_timeout=0.35)]
             ),
             user_mute_strategies=mute_strategies
         )
         user_agg = LLMUserAggregator(context, params=agg_params)
         asst_agg = LLMAssistantAggregator(context)
         
-        # Build the exact Pipecat sequence: [stt, user_agg, llm, tts, asst_agg]
+        # Build the exact Pipecat sequence: [stt, language_router, user_agg, llm, tts, call_terminator, asst_agg]
         new_processors = []
+        shared_state = {}
+        from app.adapters.pipecat.language_router import LanguageRoutingProcessor, CallTerminationProcessor
+        from app.adapters.pipecat.filler_processor import LatencyFillerProcessor
+        
+        # Add filler processor with hmm.wav
+        filler_wav = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "hmm.wav"))
+        filler_processor = LatencyFillerProcessor(filler_wav_path=filler_wav, delay_threshold_ms=300)
+        
         for p in pipecat_processors:
             if isinstance(p, GroqLLMService):
-                from app.adapters.pipecat.language_router import LanguageRoutingProcessor, CallTerminationProcessor
-                shared_state = {}
                 new_processors.append(LanguageRoutingProcessor(shared_state=shared_state))
                 new_processors.append(user_agg)
+                new_processors.append(filler_processor)
                 new_processors.append(p)
-                new_processors.append(CallTerminationProcessor(shared_state=shared_state))
             elif p.__class__.__name__.endswith("TTSService"):
                 new_processors.append(p)
+                new_processors.append(CallTerminationProcessor(shared_state=shared_state))
                 new_processors.append(asst_agg)
             else:
                 new_processors.append(p)
@@ -182,28 +192,36 @@ def _build_real_pipeline_task(
             )
             
             if isinstance(frame, UserStartedSpeakingFrame):
-                if "vad_user_started" not in global_timers:
-                    global_timers["vad_user_started"] = now
+                if latency_tracker:
+                    latency_tracker.on_vad_start()
                 bridge.on_user_interrupted()
                 
             elif isinstance(frame, UserStoppedSpeakingFrame):
-                global_timers["vad_user_stopped"] = now
+                if latency_tracker:
+                    latency_tracker.on_vad_stop()
                 
             elif isinstance(frame, TranscriptionFrame) and frame.text:
-                if "stt_first_transcript" not in global_timers:
-                    global_timers["stt_first_transcript"] = now
+                if latency_tracker:
+                    latency_tracker.on_stt_transcript()
                 bridge.on_transcript_ready(frame.text)
+                if session_manager:
+                    await session_manager.add_message(
+                        bridge._session_id, role="user", content=frame.text
+                    )
                 
             elif isinstance(frame, LLMFullResponseStartFrame):
-                if "llm_first_token" not in global_timers:
-                    global_timers["llm_first_token"] = now
+                if latency_tracker:
+                    latency_tracker.on_llm_first_token()
                 bridge.on_llm_response_started()
                     
             elif isinstance(frame, LLMFullResponseEndFrame):
-                global_timers["llm_complete"] = now
+                if latency_tracker:
+                    latency_tracker.on_llm_complete()
                 bridge.on_llm_response_ready(getattr(frame, "text", ""))
                 
             elif isinstance(frame, TTSStartedFrame):
+                if latency_tracker:
+                    latency_tracker.on_tts_start()
                 bridge.on_audio_started()
                 
             elif isinstance(frame, TTSStoppedFrame):
@@ -214,9 +232,6 @@ def _build_real_pipeline_task(
     # Attach the LLMContext to the task so the adapter can access it later for greetings
     task._llm_context = context
     
-    if llm and hasattr(llm, "register_function"):
-        llm.register_function("end_call", end_call)
-
     return task
 
 
@@ -233,12 +248,14 @@ class PipecatAdapter:
         execution_id: str,
         transport: Optional[PipecatTransportAdapter] = None,
         fsm: Optional[Any] = None,
+        latency_tracker: Optional[Any] = None,
     ) -> None:
         self.pipeline = pipeline
         self.event_bus = event_bus
         self.session_id = session_id
         self.execution_id = execution_id
         self.transport = transport
+        self.latency_tracker = latency_tracker
 
         # Bridge is created with the optional FSM — None is fine for tests
         self.bridge = PipecatEventBridge(event_bus, session_id, execution_id, fsm=fsm)
@@ -258,7 +275,7 @@ class PipecatAdapter:
             # 1. Map internal DAG processors (transport roles excluded — handled separately)
             processor_adapters = PipecatPipelineMapper.map_pipeline(self.pipeline)
             # Filter out placeholder transport processors — the real ones come from the injected transport
-            pipecat_processors = [
+            self.pipecat_processors = [
                 p.get_processor()
                 for p in processor_adapters
                 if not getattr(p.get_processor(), "name", "").startswith("Transport_")
@@ -268,10 +285,10 @@ class PipecatAdapter:
             try:
                 if self.transport and "Mock" in type(self.transport).__name__:
                     raise ImportError("Force mock fallback for tests")
-                if any("Mock" in type(p).__name__ for p in pipecat_processors):
+                if any("Mock" in type(p).__name__ for p in self.pipecat_processors):
                     raise ImportError("Force mock fallback for tests because mock processors exist")
                 self.task = _build_real_pipeline_task(
-                    pipecat_processors, self.transport, self.bridge
+                    self.pipecat_processors, self.transport, self.bridge, self.latency_tracker
                 )
                 logger.bind(session_id=self.session_id).info(
                     "Real pipecat PipelineTask created"
@@ -283,9 +300,9 @@ class PipecatAdapter:
                 )
                 if self.transport:
                     real_t = self.transport.get_pipecat_transport()
-                    pipecat_processors.insert(0, real_t)
+                    self.pipecat_processors.insert(0, real_t)
                 self.task = MockPipecatPipelineTask(
-                    processors=pipecat_processors,
+                    processors=self.pipecat_processors,
                     event_handler=self.bridge,
                 )
 

@@ -42,8 +42,21 @@ from app.adapters.pipecat.transport import TwilioTransportAdapter
 import time
 global_timers = {}
 
-# ── FastAPI App for Twilio ──────────────────────────────────────────────
+# ── FastAPI App for Twilio & LiveKit ────────────────────────────────────
+from fastapi.middleware.cors import CORSMiddleware
+from app.routers import livekit_router
+
 app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.include_router(livekit_router.router)
 
 @app.post("/inbound-call")
 async def handle_inbound_call(request: Request):
@@ -169,9 +182,10 @@ async def run_voice_session(
     # ── 1. Session ──────────────────────────────────────────────────────
     session_manager = SessionManager()
     session = await session_manager.create_session(metadata={
-        "client_id": client_id_str,
-        "previous_summary": previous_summary,
-        "company_context": company_context
+    "client_id": client_id_str,
+    "previous_summary": previous_summary,
+    "company_context": company_context,
+    "phone_number": phone_number
     })
     session_id = session.session_id
     logger.info("Session created | session_id={sid} | client={client}", sid=session_id, client=phone_number)
@@ -190,14 +204,34 @@ async def run_voice_session(
     
     # Subscribe to SessionClosed for DB Persistence
     async def on_session_closed(event: SessionClosed) -> None:
+        from app.repositories.client_repository import ClientRepository
         async with db_manager.get_session() as db_session:
             sess_data = await session_manager.get_session(event.session_id)
             if not sess_data:
                 return
             
             c_id_str = sess_data.metadata.get("client_id")
+            c_id = None
+
             if c_id_str:
-                c_id = uuid.UUID(c_id_str)
+                try:
+                    c_id = uuid.UUID(c_id_str)
+                except ValueError:
+                    c_id = None
+
+            if not c_id:
+                # Fallback: client_id wasn't passed through properly (e.g. websocket
+                # query param missing/lost upstream), so look up/create the client
+                # using the phone_number stored on the session instead.
+                fallback_phone = sess_data.metadata.get("phone_number") or "unknown_client"
+                fallback_client = await ClientRepository.get_or_create_client(db_session, fallback_phone)
+                c_id = fallback_client.id
+                logger.warning(
+                    "client_id was missing in session metadata for {sid}; fell back to phone_number lookup ({phone})",
+                    sid=event.session_id, phone=fallback_phone,
+                )
+
+            if c_id:
                 
                 # Mock LLM Summary Generation (in real prod, call an LLM API here with transcript)
                 # Real LLM Summary Generation — combines previous summary + this call's
@@ -249,10 +283,67 @@ async def run_voice_session(
 
     await event_bus.subscribe("SessionClosed", on_session_closed)
                 
-    await event_bus.subscribe(SessionClosed.__name__, on_session_closed)
     await event_bus.start()
     event_bus.publish_sync(SessionCreated(session_id=session_id))
     logger.info("EventBus started")
+    
+    # ── 2b. UI WebSocket Bridges ────────────────────────────────────────
+    from app.routers.livekit_router import broadcast_frontend_event
+    from app.events.event_types import (
+        AssistantGreetingStarted, AssistantGreetingCompleted,
+        TranscriptReady, ThinkingStarted, ResponseGenerated,
+        SpeakingStarted, SpeakingFinished, ErrorOccurred
+    )
+
+    async def on_greeting_started(e: AssistantGreetingStarted):
+        await broadcast_frontend_event("greeting_started")
+
+    async def on_greeting_completed(e: AssistantGreetingCompleted):
+        await broadcast_frontend_event("greeting_complete")
+
+    async def on_transcript_ready(e: TranscriptReady):
+        await broadcast_frontend_event("transcription_received", {
+            "text": e.payload.get("transcript", ""),
+            "language": e.payload.get("language", "unknown"),
+            "latency_ms": e.payload.get("latency_ms", 0)
+        })
+        
+    async def on_thinking_started(e: ThinkingStarted):
+        await broadcast_frontend_event("llm_response_generating", {
+            "latency_so_far_ms": e.payload.get("latency_so_far_ms", 0)
+        })
+
+    async def on_response_generated(e: ResponseGenerated):
+        await broadcast_frontend_event("llm_response_complete", {
+            "response_text": e.payload.get("response", ""),
+            "latency_ms": e.payload.get("latency_ms", 0)
+        })
+
+    async def on_speaking_started(e: SpeakingStarted):
+        await broadcast_frontend_event("tts_playing", {
+            "duration_ms": e.payload.get("duration_ms", 0),
+            "latency_ms": e.payload.get("latency_ms", 0)
+        })
+        
+    async def on_speaking_finished(e: SpeakingFinished):
+        await broadcast_frontend_event("tts_complete", {
+            "latency_ms": e.payload.get("latency_ms", 0)
+        })
+
+    async def on_error(e: ErrorOccurred):
+        await broadcast_frontend_event("error", {
+            "error_message": str(e.payload.get("error", "Unknown pipeline error")),
+            "component": e.payload.get("component", "unknown")
+        })
+
+    await event_bus.subscribe("AssistantGreetingStarted", on_greeting_started)
+    await event_bus.subscribe("AssistantGreetingCompleted", on_greeting_completed)
+    await event_bus.subscribe("TranscriptReady", on_transcript_ready)
+    await event_bus.subscribe("ThinkingStarted", on_thinking_started)
+    await event_bus.subscribe("ResponseGenerated", on_response_generated)
+    await event_bus.subscribe("SpeakingStarted", on_speaking_started)
+    await event_bus.subscribe("SpeakingFinished", on_speaking_finished)
+    await event_bus.subscribe("ErrorOccurred", on_error)
 
     # ── 3. Conversation FSM ─────────────────────────────────────────────
     fsm = ConversationStateMachine(session_id=session_id)
@@ -285,6 +376,9 @@ async def run_voice_session(
     execution_id = str(uuid.uuid4())
 
     # ── 7. Pipecat Adapter ──────────────────────────────────────────────
+    from app.metrics.latency import LatencyTracker
+    latency_tracker = LatencyTracker()
+    
     adapter = PipecatFactory.create_adapter(
         pipeline=pipeline,
         event_bus=event_bus,
@@ -292,6 +386,7 @@ async def run_voice_session(
         execution_id=execution_id,
         transport=transport,
         fsm=fsm,
+        latency_tracker=latency_tracker,
     )
     logger.info("PipecatAdapter ready | execution_id={eid}", eid=execution_id)
 
@@ -332,20 +427,22 @@ async def run_voice_session(
         # Dump latency profiles
         import app.main
         for k, v in app.main.global_timers.items():
+            # Only log remaining global connection metrics
             logger.info(f"[LATENCY] {k} = {v}")
         app.main.global_timers.clear()
+        
+        # Print turn-by-turn benchmark summary
+        latency_tracker.print_summary()
 
+from fastapi.staticfiles import StaticFiles
+app.mount("/frontend", StaticFiles(directory="frontend"), name="frontend")
 
 def main() -> None:
     """Synchronous entry point."""
-    if TRANSPORT_MODE.lower() == "twilio":
-        logger.info("TRANSPORT_MODE is set to 'twilio'. Starting FastAPI server...")
-        import uvicorn
-        # Run uvicorn server programmatically
-        uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)
-    else:
-        logger.info("TRANSPORT_MODE is set to '{mode}'. Running standalone script...", mode=TRANSPORT_MODE)
-        asyncio.run(run_voice_session())
+    import uvicorn
+    logger.info(f"TRANSPORT_MODE is set to '{TRANSPORT_MODE}'. Starting FastAPI server on port 8000...")
+    # Always run the FastAPI server so the frontend can hit /api/livekit/join and /ws/frontend
+    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)
 
 
 if __name__ == "__main__":
