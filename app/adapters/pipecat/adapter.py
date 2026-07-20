@@ -152,9 +152,14 @@ def _build_real_pipeline_task(
         from app.adapters.pipecat.language_router import LanguageRoutingProcessor, CallTerminationProcessor
         from app.adapters.pipecat.filler_processor import LatencyFillerProcessor
         
-        # Add filler processor with hmm.wav
-        filler_wav = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "hmm.wav"))
-        filler_processor = LatencyFillerProcessor(filler_wav_path=filler_wav, delay_threshold_ms=300)
+        # Add filler processor with multiple Cartesia-generated wavs
+        base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+        filler_wavs = [
+            os.path.join(base_dir, "hmm.wav"),
+            os.path.join(base_dir, "wait_a_minute.wav"),
+            os.path.join(base_dir, "let_me_think.wav")
+        ]
+        filler_processor = LatencyFillerProcessor(filler_wav_paths=filler_wavs, delay_threshold_ms=400)
         
         for p in pipecat_processors:
             if isinstance(p, GroqLLMService):
@@ -227,7 +232,11 @@ def _build_real_pipeline_task(
             elif isinstance(frame, TTSStoppedFrame):
                 bridge.on_audio_finished()
 
-    task = PipelineTask(real_pipeline, observers=[EventBridgeObserver()])
+    task = PipelineTask(
+        real_pipeline, 
+        observers=[EventBridgeObserver()],
+        idle_timeout_secs=3600
+    )
 
     # Attach the LLMContext to the task so the adapter can access it later for greetings
     task._llm_context = context
@@ -329,10 +338,10 @@ class PipecatAdapter:
             import asyncio
             import wave
             if os.getenv("ENABLE_INITIAL_GREETING", "True").lower() == "true":
-                from pipecat.frames.frames import LLMMessagesAppendFrame, OutputAudioRawFrame, BotStoppedSpeakingFrame
+                from pipecat.frames.frames import TTSSpeakFrame, BotStoppedSpeakingFrame
                 from app.events.event_types import AssistantGreetingStarted
                 
-                logger.bind(session_id=self.session_id).info("Queueing initial direct audio greeting")
+                logger.bind(session_id=self.session_id).info("Queueing initial direct TTS greeting")
                 
                 self.event_bus.publish_sync(
                     AssistantGreetingStarted(session_id=self.session_id)
@@ -341,33 +350,12 @@ class PipecatAdapter:
                 # Delay greeting to allow Twilio audio to fully connect
                 await asyncio.sleep(0.5)
                 
-                # 1. Read pre-recorded WAV file and queue raw PCM frames directly to skip TTS
-                frames_to_queue = []
-                try:
-                    with wave.open("greetings.wav", "rb") as wf:
-                        sample_rate = wf.getframerate()
-                        num_channels = wf.getnchannels()
-                        chunk_frames = int(sample_rate * 0.1)  # 100ms chunks
-                        while True:
-                            data = wf.readframes(chunk_frames)
-                            if not data:
-                                break
-                            frames_to_queue.append(
-                                OutputAudioRawFrame(audio=data, sample_rate=sample_rate, num_channels=num_channels)
-                            )
-                except Exception as e:
-                    logger.error(f"Failed to read greetings.wav: {e}")
+                greeting_text = "Hello, I'm Sarah from Cybernauts Noida. How can I assist you?"
                 
-                # 2. Add LLM message to maintain conversation context (bot remembers it spoke)
-                frames_to_queue.append(
-                    LLMMessagesAppendFrame(
-                        messages=[{
-                            "role": "assistant",
-                            "content": "Hello, I'm Sarah from Cybernauts Noida. How can I assist you?"
-                        }],
-                        run_llm=False
-                    )
-                )
+                # 1. Synthesize the greeting dynamically and automatically append to context
+                frames_to_queue = [
+                    TTSSpeakFrame(text=greeting_text, append_to_context=True)
+                ]
                 
                 # 3. Tell the mute strategy that the bot has finished speaking its first utterance
                 #    so it un-mutes the user's microphone to allow LLM interaction.

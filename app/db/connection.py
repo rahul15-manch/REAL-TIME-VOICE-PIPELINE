@@ -31,6 +31,8 @@ class DatabaseConnectionManager:
                 pool_size=DATABASE_POOL_SIZE,
                 max_overflow=DATABASE_MAX_OVERFLOW,
                 pool_timeout=DATABASE_POOL_TIMEOUT,
+                pool_pre_ping=True,
+                pool_recycle=300,
                 echo=False,
             )
             self._sessionmaker = async_sessionmaker(

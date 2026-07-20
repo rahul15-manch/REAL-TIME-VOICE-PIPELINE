@@ -13,38 +13,46 @@ class LatencyFillerProcessor(FrameProcessor):
     Monitors transcription frames and plays a short filler audio 
     if the LLM response is delayed by more than a given threshold.
     """
-    def __init__(self, filler_wav_path: str = "hmm.wav", delay_threshold_ms: int = 400, **kwargs):
+    def __init__(self, filler_wav_paths: list[str] = None, delay_threshold_ms: int = 400, **kwargs):
         super().__init__(**kwargs)
+        if filler_wav_paths is None:
+            filler_wav_paths = ["hmm.wav", "wait_a_minute.wav", "let_me_think.wav"]
+            
         self.delay_threshold = delay_threshold_ms / 1000.0
         self._wait_task = None
-        self._audio_frames = []
+        self._audio_frames_list = []
         
-        # Preload the audio file
-        try:
-            if os.path.exists(filler_wav_path):
-                with wave.open(filler_wav_path, "rb") as wf:
-                    sample_rate = wf.getframerate()
-                    num_channels = wf.getnchannels()
-                    # Chunk size doesn't matter too much, just need to send it down
-                    chunk_frames = int(sample_rate * 0.05) # 50ms chunks
-                    while True:
-                        data = wf.readframes(chunk_frames)
-                        if not data:
-                            break
-                        self._audio_frames.append(OutputAudioRawFrame(
-                            audio=data,
-                            sample_rate=sample_rate,
-                            num_channels=num_channels
-                        ))
-                logger.info(f"Loaded {len(self._audio_frames)} chunks from {filler_wav_path} for filler processor.")
-            else:
-                logger.warning(f"Filler audio {filler_wav_path} not found. Filler disabled.")
-        except Exception as e:
-            logger.error(f"Failed to load filler audio: {e}")
+        # Preload all audio files
+        import random
+        self.random = random
+        
+        for path in filler_wav_paths:
+            try:
+                if os.path.exists(path):
+                    frames = []
+                    with wave.open(path, "rb") as wf:
+                        sample_rate = wf.getframerate()
+                        num_channels = wf.getnchannels()
+                        chunk_frames = int(sample_rate * 0.05) # 50ms chunks
+                        while True:
+                            data = wf.readframes(chunk_frames)
+                            if not data:
+                                break
+                            frames.append(OutputAudioRawFrame(
+                                audio=data,
+                                sample_rate=sample_rate,
+                                num_channels=num_channels
+                            ))
+                    self._audio_frames_list.append(frames)
+                    logger.info(f"Loaded {len(frames)} chunks from {path} for filler processor.")
+                else:
+                    logger.warning(f"Filler audio {path} not found.")
+            except Exception as e:
+                logger.error(f"Failed to load filler audio {path}: {e}")
 
     async def _play_filler_if_delayed(self):
         """Task that waits for the threshold and pushes the audio."""
-        if not self._audio_frames:
+        if not self._audio_frames_list:
             return
             
         try:
@@ -52,8 +60,10 @@ class LatencyFillerProcessor(FrameProcessor):
             logger.info(f"LLM response delayed > {self.delay_threshold}s. Playing filler audio...")
             
             # Use self.push_frame directly. Note: Pipecat processor queues handles concurrent push_frame safely.
+            audio_frames = self.random.choice(self._audio_frames_list)
+            
             await self.push_frame(TTSStartedFrame(), FrameDirection.DOWNSTREAM)
-            for frame in self._audio_frames:
+            for frame in audio_frames:
                 await self.push_frame(frame, FrameDirection.DOWNSTREAM)
                 await asyncio.sleep(0.01) # Yield to event loop, simulate streaming
             await self.push_frame(TTSStoppedFrame(), FrameDirection.DOWNSTREAM)
