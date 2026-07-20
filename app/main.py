@@ -90,21 +90,18 @@ async def handle_inbound_call(request: Request):
         logger.error(f"Failed DB pre-fetch: {e}")
 
     # Resolve the host for the websocket stream
-    host = request.headers.get("host", "localhost:8000")
+    import os
+    public_url = os.getenv("PUBLIC_BASE_URL", "")
+    if public_url:
+        stream_url = public_url.replace("http://", "ws://").replace("https://", "wss://") + f"/ws?phone={phone_encoded}&client_id={client_id_str}"
+    else:
+        host = request.headers.get("host", "localhost:8000")
+        scheme = "wss" if "ngrok" in host or request.headers.get("x-forwarded-proto") == "https" else "ws"
+        stream_url = f"{scheme}://{host}/ws?phone={phone_encoded}&client_id={client_id_str}"
     
-    # If routed through ngrok, force secure websocket (wss)
-    scheme = "wss" if "ngrok" in host or request.headers.get("x-forwarded-proto") == "https" else "ws"
-
-    company_context = request.query_params.get("company_context", "")
-    context_encoded = urllib.parse.quote(company_context) if company_context else ""
-    
-    stream_url = f"{scheme}://{host}/ws?phone={phone_encoded}&client_id={client_id_str}"
-    
-    if context_encoded:
-        stream_url += f"&company_context={context_encoded}"
-    if previous_summary:
-        summary_encoded = urllib.parse.quote(previous_summary)
-        stream_url += f"&previous_summary={summary_encoded}"
+    # Note: We NO LONGER append company_context or previous_summary to the stream_url 
+    # to avoid exceeding Twilio's 255-character limit for the <Stream url> attribute.
+    # They are fetched natively inside the websocket handler.
     
     # Escape ampersands for valid XML
     stream_url_xml = stream_url.replace("&", "&amp;")
@@ -154,7 +151,19 @@ async def websocket_endpoint(websocket: WebSocket):
     phone_number = websocket.query_params.get("phone", "unknown_client")
     client_id_str = websocket.query_params.get("client_id", "")
     company_context = websocket.query_params.get("company_context", "")
-    previous_summary = websocket.query_params.get("previous_summary", "")
+    
+    # ── Database Pre-fetch (Moved from handle_inbound_call) ──
+    previous_summary = ""
+    if client_id_str:
+        try:
+            from app.db.connection import db_manager
+            from app.repositories.session_repository import SessionRepository
+            async with db_manager.get_session() as db:
+                summary_text = await SessionRepository.get_summary(db, client_id_str)
+                if summary_text:
+                    previous_summary = summary_text
+        except Exception as e:
+            logger.error(f"Failed to fetch summary in websocket: {e}")
     
     # Block and run the voice session on this websocket
     await run_voice_session(

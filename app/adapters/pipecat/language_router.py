@@ -69,7 +69,7 @@ class CallTerminationProcessor(FrameProcessor):
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
-        from pipecat.frames.frames import TTSStoppedFrame, EndFrame, TextFrame, AudioRawFrame
+        from pipecat.frames.frames import TTSStoppedFrame, EndTaskFrame, TextFrame, AudioRawFrame
         
         # Log frame types (skip spammy ones)
         if not isinstance(frame, (AudioRawFrame, TextFrame)):
@@ -77,10 +77,10 @@ class CallTerminationProcessor(FrameProcessor):
             
         await self.push_frame(frame, direction)
         
-        # When bot finishes its response, if hangup requested, queue EndFrame
+        # When bot finishes its response, if hangup requested, queue EndTaskFrame
         if isinstance(frame, TTSStoppedFrame):
             logger.info(f"CallTerminationProcessor saw TTSStoppedFrame. state: {self.shared_state}")
             if self.shared_state.get("hangup_requested"):
-                logger.warning("CallTerminationProcessor: Bot finished responding to goodbye. Pushing EndFrame to terminate the call.")
-                await self.push_frame(EndFrame(), direction)
+                logger.warning("CallTerminationProcessor: Bot finished responding to goodbye. Pushing EndTaskFrame to terminate the call.")
+                await self.push_frame(EndTaskFrame(), direction)
                 self.shared_state["hangup_requested"] = False
