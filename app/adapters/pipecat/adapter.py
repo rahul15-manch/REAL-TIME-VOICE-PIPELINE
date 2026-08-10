@@ -248,6 +248,8 @@ def _build_real_pipeline_task(
         # and only adds pipeline overhead.
         # Instantiate greeting processor if greetings.wav exists and it's a new customer
         greeting_processor = None
+        import os
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
         if os.getenv("ENABLE_INITIAL_GREETING", "True").lower() == "true" and not previous_summary:
             greetings_wav_path = os.path.join(project_root, "greetings.wav")
             if os.path.exists(greetings_wav_path):
