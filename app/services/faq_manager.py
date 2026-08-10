@@ -22,12 +22,13 @@ async def fetch_faq(params, query: str):
         search_terms = words if words else [query]
         
         results = []
-        async with db_manager.get_session() as db:
-            for term in search_terms:
-                faqs = await FAQRepository.search_faqs(db, term)
-                for f in faqs:
-                    if f.question not in [r["question"] for r in results]:
-                        results.append({"category": f.category, "question": f.question, "answer": f.answer})
+        from app.llm.company_faq import _CACHED_FAQ_LIST
+        for term in search_terms:
+            lower_term = term.lower()
+            for faq in _CACHED_FAQ_LIST:
+                if lower_term in faq["question"].lower() or lower_term in faq["category"].lower() or lower_term in faq["answer"].lower():
+                    if faq["question"] not in [r["question"] for r in results]:
+                        results.append(faq)
                         
         if results:
             # We can format the top 3 results

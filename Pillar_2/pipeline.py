@@ -12,7 +12,7 @@ def create_deepgram_stt(api_key: str, model: str = "nova-2-phonecall", language:
             language=language,
             smart_format=True,
             interim_results=True,
-            endpointing=300,
+            endpointing=150, # Reduced from 300ms to 150ms for faster turn taking
         ),
     )
 

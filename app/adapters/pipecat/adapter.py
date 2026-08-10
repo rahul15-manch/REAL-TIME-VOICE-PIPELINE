@@ -201,7 +201,9 @@ def _build_real_pipeline_task(
         
         agg_params = LLMUserAggregatorParams(
             user_turn_strategies=UserTurnStrategies(
-                stop=[SpeechTimeoutUserTurnStopStrategy(user_speech_timeout=0.8)]
+                # CRITICAL PATH OPTIMIZATION: Reduce timeout from 0.8s to 0.1s. 
+                # VAD already waits 300ms, so we don't need another 800ms of sequential waiting.
+                stop=[SpeechTimeoutUserTurnStopStrategy(user_speech_timeout=0.1)]
             )
         )
         user_agg = LLMUserAggregator(context, params=agg_params)
@@ -211,23 +213,9 @@ def _build_real_pipeline_task(
         new_processors = []
         from app.adapters.pipecat.language_router import LanguageRoutingProcessor, CallTerminationProcessor
         from app.adapters.pipecat.tool_interceptor import ToolInterceptionProcessor
-        from app.adapters.pipecat.filler_processor import LatencyFillerProcessor
-        
-        # Add filler processor with multiple Cartesia-generated wavs
-        import os
-        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-        filler_wavs = [
-            os.path.join(project_root, "hmm.wav"),
-            os.path.join(project_root, "wait_a_minute.wav"),
-            os.path.join(project_root, "let_me_think.wav")
-        ]
-        filler_processor = LatencyFillerProcessor(
-            filler_wav_paths=filler_wavs,
-            delay_threshold_ms=1000,
-            event_bus=event_bus,
-            session_id=session_id
-        )
-        
+        # CRITICAL PATH OPTIMIZATION: LatencyFillerProcessor is removed. 
+        # With TTFA targets < 700ms, a 1000ms delay threshold means the filler never triggers
+        # and only adds pipeline overhead.
         # Instantiate greeting processor if greetings.wav exists and it's a new customer
         greeting_processor = None
         if os.getenv("ENABLE_INITIAL_GREETING", "True").lower() == "true" and not previous_summary:
@@ -239,7 +227,7 @@ def _build_real_pipeline_task(
             if isinstance(p, (GroqLLMService, OpenAILLMService)) or p.__class__.__name__ == "ResilientLLMProcessor":
                 new_processors.append(LanguageRoutingProcessor(shared_state=shared_state))
                 new_processors.append(user_agg)
-                new_processors.append(filler_processor)
+                # filler_processor removed for latency optimization
                 new_processors.append(p)
                 new_processors.append(ToolInterceptionProcessor())
             elif p.__class__.__name__.endswith("TTSService"):
