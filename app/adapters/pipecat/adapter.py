@@ -365,21 +365,25 @@ def _build_real_pipeline_task(
                     self._current_llm_response = ""
                 
             elif isinstance(frame, TTSStartedFrame):
-                if latency_tracker:
-                    latency_tracker.on_tts_start()
-                if not self._first_tts_chunk_logged:
-                    logger.info(f"[OBSERVABILITY] First TTS chunk synthesized | session_id={bridge._session_id} | ts={now}")
-                    self._first_tts_chunk_logged = True
-                bridge.on_audio_started()
+                if not getattr(self, "_tts_is_active", False):
+                    self._tts_is_active = True
+                    if latency_tracker:
+                        latency_tracker.on_tts_start()
+                    if not self._first_tts_chunk_logged:
+                        logger.info(f"[OBSERVABILITY] First TTS chunk synthesized | session_id={bridge._session_id} | ts={now}")
+                        self._first_tts_chunk_logged = True
+                    bridge.on_audio_started()
                 
             elif isinstance(frame, AudioRawFrame) and source_class in ("CartesiaTTSService", "ElevenLabsTTSService", "DeepgramTTSService") and not getattr(self, "_first_audio_packet_sent", False):
                 logger.info(f"[OBSERVABILITY] First audio packet sent (Transport bound) | session_id={bridge._session_id} | ts={now}")
                 self._first_audio_packet_sent = True
                 
             elif isinstance(frame, TTSStoppedFrame):
-                logger.info(f"[OBSERVABILITY] Audio streaming completion | session_id={bridge._session_id} | ts={now}")
-                bridge.on_audio_finished()
-                self._first_audio_packet_sent = False
+                if getattr(self, "_tts_is_active", False):
+                    self._tts_is_active = False
+                    logger.info(f"[OBSERVABILITY] Audio streaming completion | session_id={bridge._session_id} | ts={now}")
+                    bridge.on_audio_finished()
+                    self._first_audio_packet_sent = False
                 
             elif isinstance(frame, EndFrame):
                 logger.info(f"[OBSERVABILITY] Pipeline shutdown initiated | session_id={bridge._session_id} | ts={now}")

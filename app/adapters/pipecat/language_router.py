@@ -81,7 +81,13 @@ class CallTerminationProcessor(FrameProcessor):
             self.llm_response_completed = True
         
         # Log frame types (skip spammy ones)
-        if not isinstance(frame, (AudioRawFrame, TextFrame)):
+        if not isinstance(frame, (AudioRawFrame, TextFrame)) and type(frame).__name__ not in (
+            "OutputTransportMessageUrgentFrame", 
+            "BotConnectedFrame", 
+            "BotSpeakingFrame", 
+            "BotStoppedSpeakingFrame",
+            "TransportMessageUrgentFrame"
+        ):
             logger.debug(f"CallTerminationProcessor received: {type(frame).__name__} | hangup_requested={self.shared_state.get('hangup_requested', False)} | llm_completed={self.llm_response_completed}")
             
         await self.push_frame(frame, direction)
