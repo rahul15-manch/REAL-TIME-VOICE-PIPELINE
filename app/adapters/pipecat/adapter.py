@@ -121,17 +121,22 @@ class FastSentenceAggregator(FrameProcessor):
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
         
+        from pipecat.frames.frames import LLMFullResponseEndFrame, CancelFrame, UserStartedSpeakingFrame
+        
         if isinstance(frame, TextFrame):
             self._aggregation += frame.text
             # If length >= 8 and ends with punctuation, flush immediately
             if len(self._aggregation.strip()) >= 8 and self._end_punctuation.search(self._aggregation):
                 await self.push_frame(TextFrame(self._aggregation))
                 self._aggregation = ""
-        elif isinstance(frame, EndFrame):
+        elif isinstance(frame, (EndFrame, LLMFullResponseEndFrame)):
             if self._aggregation.strip():
                 await self.push_frame(TextFrame(self._aggregation))
                 self._aggregation = ""
-            await self.push_frame(frame)
+            await self.push_frame(frame, direction)
+        elif isinstance(frame, (CancelFrame, UserStartedSpeakingFrame)):
+            self._aggregation = ""
+            await self.push_frame(frame, direction)
         else:
             await self.push_frame(frame, direction)
 
