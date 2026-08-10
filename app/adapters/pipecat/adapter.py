@@ -104,7 +104,37 @@ class GreetingPlayerProcessor(FrameProcessor):
             logger.error(f"Failed to play greeting wav: {e}")
 
 
-# ── Real pipeline task builder ────────────────────────────────────────
+# ── Fast Sentence Aggregator (Custom) ─────────────────────────────────
+
+import re
+from pipecat.processors.frame_processor import FrameProcessor, FrameDirection
+from pipecat.frames.frames import Frame, TextFrame, EndFrame, StartFrame, SystemFrame
+
+class FastSentenceAggregator(FrameProcessor):
+    """Aggregates text chunks into complete sentences and pushes downstream instantly."""
+    def __init__(self):
+        super().__init__()
+        self._aggregation = ""
+        # Match standard punctuation and Hindi danda
+        self._end_punctuation = re.compile(r'([.?!।।]+)\s*$')
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection):
+        await super().process_frame(frame, direction)
+        
+        if isinstance(frame, TextFrame):
+            self._aggregation += frame.text
+            # If length >= 8 and ends with punctuation, flush immediately
+            if len(self._aggregation.strip()) >= 8 and self._end_punctuation.search(self._aggregation):
+                await self.push_frame(TextFrame(self._aggregation))
+                self._aggregation = ""
+        elif isinstance(frame, EndFrame):
+            if self._aggregation.strip():
+                await self.push_frame(TextFrame(self._aggregation))
+                self._aggregation = ""
+            await self.push_frame(frame)
+        else:
+            await self.push_frame(frame, direction)
+
 
 def _build_real_pipeline_task(
     pipecat_processors: List[Any],
@@ -201,9 +231,9 @@ def _build_real_pipeline_task(
         
         agg_params = LLMUserAggregatorParams(
             user_turn_strategies=UserTurnStrategies(
-                # CRITICAL PATH OPTIMIZATION: Reduce timeout from 0.8s to 0.1s. 
-                # VAD already waits 300ms, so we don't need another 800ms of sequential waiting.
-                stop=[SpeechTimeoutUserTurnStopStrategy(user_speech_timeout=0.1)]
+                # CRITICAL PATH OPTIMIZATION: Reduce timeout to 0.0s to start LLM instantly
+                # VAD already waits 220ms, so we don't need any sequential waiting here.
+                stop=[SpeechTimeoutUserTurnStopStrategy(user_speech_timeout=0.0)]
             )
         )
         user_agg = LLMUserAggregator(context, params=agg_params)
@@ -231,6 +261,7 @@ def _build_real_pipeline_task(
                 new_processors.append(p)
                 new_processors.append(ToolInterceptionProcessor())
             elif p.__class__.__name__.endswith("TTSService"):
+                new_processors.append(FastSentenceAggregator())
                 new_processors.append(p)
                 new_processors.append(CallTerminationProcessor(shared_state=shared_state))
                 new_processors.append(asst_agg)
@@ -258,6 +289,7 @@ def _build_real_pipeline_task(
             self._current_llm_response = ""
             self._first_partial_logged = False
             self._first_llm_token_logged = False
+            self._first_complete_sentence_logged = False
             self._first_tts_chunk_logged = False
             self._stt_started_logged = False
 
@@ -276,11 +308,16 @@ def _build_real_pipeline_task(
                 self._stt_started_logged = True
             
             # Accumulate LLM response text only when pushed directly from the LLM processor
-            if isinstance(frame, TextFrame) and source_class in ("GroqLLMService", "OpenAILLMService", "ResilientLLMProcessor"):
-                if not self._first_llm_token_logged:
-                    logger.info(f"[OBSERVABILITY] First LLM token | session_id={bridge._session_id} | ts={now}")
-                    self._first_llm_token_logged = True
-                self._current_llm_response += frame.text
+            if isinstance(frame, TextFrame):
+                if source_class in ("GroqLLMService", "OpenAILLMService", "ResilientLLMProcessor"):
+                    if not self._first_llm_token_logged:
+                        logger.info(f"[OBSERVABILITY] First LLM token | session_id={bridge._session_id} | ts={now}")
+                        self._first_llm_token_logged = True
+                    self._current_llm_response += frame.text
+                elif source_class == "FastSentenceAggregator":
+                    if not self._first_complete_sentence_logged:
+                        logger.info(f"[OBSERVABILITY] First complete sentence (TTS request) | session_id={bridge._session_id} | ts={now} | text='{frame.text}'")
+                        self._first_complete_sentence_logged = True
             
             if isinstance(frame, UserStartedSpeakingFrame):
                 if latency_tracker:

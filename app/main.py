@@ -100,6 +100,21 @@ async def lifespan(app: FastAPI):
     except Exception as faq_err:
         logger.error(f"Failed to refresh FAQ cache on startup: {faq_err}")
 
+    # Step 7: Prewarm providers (DNS resolution & TLS handshakes)
+    try:
+        import aiohttp
+        async with aiohttp.ClientSession() as session:
+            # Prewarm OpenAI/Groq
+            await session.head("https://api.openai.com", timeout=2)
+            await session.head("https://api.groq.com", timeout=2)
+            # Prewarm Deepgram
+            await session.head("https://api.deepgram.com", timeout=2)
+            # Prewarm Cartesia
+            await session.head("https://api.cartesia.ai", timeout=2)
+        logger.info("Provider DNS and TLS handshakes prewarmed successfully.")
+    except Exception as prewarm_err:
+        logger.warning(f"Failed to prewarm some provider endpoints: {prewarm_err}")
+
     # Mark as ready regardless of DB to allow graceful degradation
     APP_STATE["is_ready"] = True
     

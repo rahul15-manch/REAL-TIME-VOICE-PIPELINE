@@ -12,7 +12,7 @@ def create_deepgram_stt(api_key: str, model: str = "nova-2-phonecall", language:
             language=language,
             smart_format=True,
             interim_results=True,
-            endpointing=150, # Reduced from 300ms to 150ms for faster turn taking
+            endpointing=80, # Reduced to 80ms for latency
         ),
     )
 
@@ -22,7 +22,7 @@ def build_vad_analyzer() -> SileroVADAnalyzer:
         params=VADParams(
             confidence=0.7,
             start_secs=0.15,    # 150ms sweet spot to filter transient noises
-            stop_secs=0.3,      # 300ms to allow brief natural pauses
+            stop_secs=0.22,     # Reduced from 0.3 to 0.22 for latency
             min_volume=0.05,    # 5% threshold to block background hums
         )
     )
