@@ -104,30 +104,75 @@ class GreetingPlayerProcessor(FrameProcessor):
             logger.error(f"Failed to play greeting wav: {e}")
 
 
+import asyncio
+from pipecat.frames.frames import LLMMessagesAppendFrame, TextFrame, TTSStartedFrame, BotConnectedFrame, Frame, LLMFullResponseEndFrame
+from pipecat.processors.frame_processor import FrameProcessor, FrameDirection
+
 class WelcomeBackTriggerProcessor(FrameProcessor):
-    """Triggers the LLM to generate a personalized greeting for returning users."""
+    """Triggers the LLM to generate a personalized greeting for returning users without adding fake user turns."""
     def __init__(self, previous_summary: str):
         super().__init__()
         self.previous_summary = previous_summary
         self.has_triggered = False
+        self.audio_started = False
+        self._watchdog_task = None
+        self._system_message = {
+            "role": "system", 
+            "content": f"The user has just connected to the call. Their previous summary is: {self.previous_summary}. Welcome them back warmly and briefly. Do not wait for their prompt."
+        }
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
+        from loguru import logger
         
-        # When bot connects, if we haven't triggered yet, push a fake transcription 
-        # UPSTREAM so it hits the LLM and causes it to speak.
         if isinstance(frame, BotConnectedFrame) and not self.has_triggered:
             self.has_triggered = True
-            from pipecat.frames.frames import TranscriptionFrame
-            from loguru import logger
-            logger.info("WelcomeBackTriggerProcessor triggering LLM greeting for returning user.")
+            logger.info("WelcomeBackTriggerProcessor: Triggering dynamic greeting without fake user turn.")
             
-            # Note: We place this BEFORE UserAggregator in the DAG. It receives BotConnectedFrame 
-            # flowing UPSTREAM, then pushes the fake transcription DOWNSTREAM to the LLM.
-            await self.push_frame(TranscriptionFrame(text="Hello", user_id="user", timestamp="now"), FrameDirection.DOWNSTREAM)
-            from pipecat.frames.frames import UserStoppedSpeakingFrame
-            await self.push_frame(UserStoppedSpeakingFrame(), FrameDirection.DOWNSTREAM)
+            # Push the system prompt directly DOWNSTREAM to LLM
+            await self.push_frame(LLMMessagesAppendFrame(messages=[self._system_message]), FrameDirection.DOWNSTREAM)
             
+            # Start the 3-second watchdog
+            self._watchdog_task = asyncio.create_task(self._watchdog())
+            
+        elif isinstance(frame, TTSStartedFrame):
+            self.audio_started = True
+            if self._watchdog_task and not self._watchdog_task.done():
+                self._watchdog_task.cancel()
+            
+        await self.push_frame(frame, direction)
+
+    async def _watchdog(self):
+        from loguru import logger
+        await asyncio.sleep(3.0)
+        if not self.audio_started:
+            logger.warning("WelcomeBackTriggerProcessor: 3-second watchdog triggered! Forcing fallback welcome.")
+            await self.push_frame(TextFrame("Welcome back!"), FrameDirection.DOWNSTREAM)
+
+class BootstrapMemoryScrubber(FrameProcessor):
+    """Cleans up the LLM context to ensure the bootstrap exchange is excluded from history."""
+    def __init__(self, context, system_message):
+        super().__init__()
+        self.context = context
+        self.system_message = system_message
+        self.has_scrubbed = False
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection):
+        await super().process_frame(frame, direction)
+        from loguru import logger
+        
+        if isinstance(frame, LLMFullResponseEndFrame) and not self.has_scrubbed:
+            self.has_scrubbed = True
+            try:
+                # Remove the exact system message we added and the assistant's response
+                if self.context.messages and len(self.context.messages) >= 2:
+                    if self.context.messages[-2].get("role") == "system" and self.context.messages[-2].get("content") == self.system_message["content"]:
+                        self.context.messages.pop(-2) # Remove system
+                        self.context.messages.pop(-1) # Remove assistant response
+                        logger.info("BootstrapMemoryScrubber: Successfully excluded bootstrap event from memory.")
+            except Exception as e:
+                logger.warning(f"BootstrapMemoryScrubber: Could not scrub memory: {e}")
+                
         await self.push_frame(frame, direction)
 
 # ── Fast Sentence Aggregator (Custom) ─────────────────────────────────
@@ -280,6 +325,7 @@ def _build_real_pipeline_task(
         # Instantiate greeting processor if greetings.wav exists and it's a new customer
         greeting_processor = None
         welcome_back_processor = None
+        bootstrap_scrubber = None
         import os
         project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
         if os.getenv("ENABLE_INITIAL_GREETING", "True").lower() == "true":
@@ -291,6 +337,7 @@ def _build_real_pipeline_task(
                 # If there's a previous summary, they are a returning user. We skip the generic wav 
                 # and trigger the LLM to greet them dynamically based on the memory!
                 welcome_back_processor = WelcomeBackTriggerProcessor(previous_summary)
+                bootstrap_scrubber = BootstrapMemoryScrubber(context, welcome_back_processor._system_message)
         
         for p in pipecat_processors:
             if isinstance(p, (GroqLLMService, OpenAILLMService)) or p.__class__.__name__ == "ResilientLLMProcessor":
@@ -306,6 +353,8 @@ def _build_real_pipeline_task(
                 new_processors.append(p)
                 new_processors.append(CallTerminationProcessor(shared_state=shared_state))
                 new_processors.append(asst_agg)
+                if bootstrap_scrubber:
+                    new_processors.append(bootstrap_scrubber)
                 if greeting_processor:
                     new_processors.append(greeting_processor)
             else:
