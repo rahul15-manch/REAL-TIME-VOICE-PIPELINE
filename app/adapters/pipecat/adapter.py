@@ -104,6 +104,32 @@ class GreetingPlayerProcessor(FrameProcessor):
             logger.error(f"Failed to play greeting wav: {e}")
 
 
+class WelcomeBackTriggerProcessor(FrameProcessor):
+    """Triggers the LLM to generate a personalized greeting for returning users."""
+    def __init__(self, previous_summary: str):
+        super().__init__()
+        self.previous_summary = previous_summary
+        self.has_triggered = False
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection):
+        await super().process_frame(frame, direction)
+        
+        # When bot connects, if we haven't triggered yet, push a fake transcription 
+        # UPSTREAM so it hits the LLM and causes it to speak.
+        if isinstance(frame, BotConnectedFrame) and not self.has_triggered:
+            self.has_triggered = True
+            from pipecat.frames.frames import TranscriptionFrame
+            from loguru import logger
+            logger.info("WelcomeBackTriggerProcessor triggering LLM greeting for returning user.")
+            
+            # Note: We place this BEFORE UserAggregator in the DAG. It receives BotConnectedFrame 
+            # flowing UPSTREAM, then pushes the fake transcription DOWNSTREAM to the LLM.
+            await self.push_frame(TranscriptionFrame(text="Hello", user_id="user", timestamp="now"), FrameDirection.DOWNSTREAM)
+            from pipecat.frames.frames import UserStoppedSpeakingFrame
+            await self.push_frame(UserStoppedSpeakingFrame(), FrameDirection.DOWNSTREAM)
+            
+        await self.push_frame(frame, direction)
+
 # ── Fast Sentence Aggregator (Custom) ─────────────────────────────────
 
 import re
@@ -253,16 +279,24 @@ def _build_real_pipeline_task(
         # and only adds pipeline overhead.
         # Instantiate greeting processor if greetings.wav exists and it's a new customer
         greeting_processor = None
+        welcome_back_processor = None
         import os
         project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-        if os.getenv("ENABLE_INITIAL_GREETING", "True").lower() == "true" and not previous_summary:
-            greetings_wav_path = os.path.join(project_root, "greetings.wav")
-            if os.path.exists(greetings_wav_path):
-                greeting_processor = GreetingPlayerProcessor(greetings_wav_path)
+        if os.getenv("ENABLE_INITIAL_GREETING", "True").lower() == "true":
+            if not previous_summary:
+                greetings_wav_path = os.path.join(project_root, "greetings.wav")
+                if os.path.exists(greetings_wav_path):
+                    greeting_processor = GreetingPlayerProcessor(greetings_wav_path)
+            else:
+                # If there's a previous summary, they are a returning user. We skip the generic wav 
+                # and trigger the LLM to greet them dynamically based on the memory!
+                welcome_back_processor = WelcomeBackTriggerProcessor(previous_summary)
         
         for p in pipecat_processors:
             if isinstance(p, (GroqLLMService, OpenAILLMService)) or p.__class__.__name__ == "ResilientLLMProcessor":
                 new_processors.append(LanguageRoutingProcessor(shared_state=shared_state))
+                if welcome_back_processor:
+                    new_processors.append(welcome_back_processor)
                 new_processors.append(user_agg)
                 # filler_processor removed for latency optimization
                 new_processors.append(p)
