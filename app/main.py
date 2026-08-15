@@ -510,10 +510,14 @@ async def run_voice_session(
                 fallback_client = await ClientRepository.get_or_create_client(db_session, fallback_phone)
                 c_id = fallback_client.id
                 masked_fallback = f"{fallback_phone[:3]}******{fallback_phone[-4:]}" if len(fallback_phone) > 7 and fallback_phone != "unknown_client" else fallback_phone
-                logger.warning(
-                    "client_id was missing in session metadata for {sid}; fell back to phone_number lookup ({phone})",
-                    sid=event.session_id, phone=masked_fallback,
-                )
+                
+                if fallback_phone == "unknown_client":
+                    logger.info("Session closed for web client (unknown_client).")
+                else:
+                    logger.warning(
+                        "client_id was missing in session metadata for {sid}; fell back to phone_number lookup ({phone})",
+                        sid=event.session_id, phone=masked_fallback,
+                    )
 
             if c_id:
                 

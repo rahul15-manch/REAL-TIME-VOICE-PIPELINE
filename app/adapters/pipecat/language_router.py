@@ -69,7 +69,7 @@ class CallTerminationProcessor(FrameProcessor):
         await super().process_frame(frame, direction)
         from pipecat.frames.frames import (
             TTSStoppedFrame, EndTaskFrame, TextFrame, AudioRawFrame,
-            TranscriptionFrame, LLMFullResponseEndFrame, CancelFrame
+            TranscriptionFrame, LLMFullResponseEndFrame, CancelFrame, EndFrame
         )
         
         # Reset completed flag when a new user turn starts (user starts speaking/transcribing)
@@ -99,11 +99,17 @@ class CallTerminationProcessor(FrameProcessor):
                 return
             logger.info(f"CallTerminationProcessor saw TTSStoppedFrame. state: {self.shared_state} | llm_completed={self.llm_response_completed}")
             if self.shared_state.get("hangup_requested") and self.llm_response_completed:
-                logger.warning("CallTerminationProcessor: Bot finished responding to goodbye. Terminating the call via master Task.")
-                task = self.shared_state.get("task")
-                if task:
-                    await task.queue_frames([CancelFrame()])
-                else:
-                    await self.push_frame(EndTaskFrame(), direction)
+                logger.warning("CallTerminationProcessor: Bot finished responding to goodbye. Terminating the call in 2 seconds...")
+                
+                async def delayed_termination():
+                    import asyncio
+                    await asyncio.sleep(2.5)  # 2.5s buffer for network + client playback
+                    task = self.shared_state.get("task")
+                    if task:
+                        await task.queue_frames([CancelFrame()])
+                    
+                import asyncio
+                asyncio.create_task(delayed_termination())
+                
                 self.shared_state["hangup_requested"] = False
                 self.llm_response_completed = False
