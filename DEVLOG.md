@@ -854,3 +854,42 @@ A comprehensive sprint to resolve critical turn-end call teardown bugs, enforce 
   - Implemented `/api/login` and `/api/register` endpoints in `app/routers/livekit_router.py` and enforced `Depends(verify_jwt)` on LiveKit join and Twilio outbound dial routes.
   - Built a glassmorphic dark-theme authentication card overlay on the frontend (`index.html`, `styles.css`, `app.js`) to support secure login and dynamic user sign-up/registration.
 - **Verification**: Updated [test_company_faq.py](file:///d:/REAL-TIME-VOICE-PIPELINE/tests/test_company_faq.py) and [test_pipecat_adapter.py](file:///d:/REAL-TIME-VOICE-PIPELINE/tests/test_pipecat_adapter.py) to support database mock scopes, and added [test_livekit_auth.py](file:///d:/REAL-TIME-VOICE-PIPELINE/tests/test_livekit_auth.py) checking JWT validation. All unit tests successfully compiled and passed.
+
+---
+## Milestone — Test Suite Async Migration & Dual-Transport Architecture Patch
+**Date**: 2026-08-04
+**Status**: ✅ Complete — 450/450 Tests Passing
+
+### Overview
+Successfully migrated the entire unit testing suite to native async execution to ensure realistic concurrency, race condition, and event loop behavior testing. Resolved a dual-transport validation bug that caused Twilio calls to crash when the server was globally configured in LiveKit mode.
+
+### Actions Taken
+- **Native Async Test Suite Migration**: Reverted the synchronous monkey-patching in `conftest.py` and refactored all test files (including 4 key test suites) to run under proper async event loops (`async def test_...` with `await` on all session/context manager operations).
+- **Dual-Transport Architecture Fix**: Updated `app/main.py` and `app/main_test.py` to dynamically inspect transport type using `isinstance(transport, LiveKitTransportAdapter)` rather than branching on the global `TRANSPORT_MODE` configuration. This resolves a critical bug where Twilio calls crashed when the backend was configured in LiveKit mode.
+- **Verification**: Ran the full test suite and confirmed that all 450 tests passed successfully with 100% correctness on native async event loops (450/450 tests passed).
+
+---
+
+## Milestone — Latency Filler & Tool Interceptor Stability Patches
+**Date**: 2026-08-07
+**Status**: ✅ Complete — Implemented, Tested, and Pushed
+
+### Overview
+Addressed edge case bugs regarding call termination during conversational turn-ends:
+1. Resolved a race condition where the Latency Filler's `TTSStoppedFrame` triggered premature call hangups before the bot's actual goodbye response finished playing.
+2. Implemented text-based fallback tag interception for the `end_call` tool when native function calling is bypassed by the LLM.
+
+### Actions Taken
+- **Filler Disabling on Hangup**: Passed `shared_state` to `LatencyFillerProcessor` and disabled filler scheduling/triggering once `hangup_requested` is flagged.
+- **Filler Frame Tagging**: Tagged filler-generated `TTSStoppedFrames` with `.is_filler = True` metadata and configured the `CallTerminationProcessor` to ignore them.
+- **Fallback Tag Interceptor**: Upgraded `ToolInterceptionProcessor` to parse text-based `function=end_call>` tag structures dynamically, stripping them from the audio stream and setting `hangup_requested = True` in the shared state dictionary.
+- **Verification**: Executed the test suite; confirmed all 450 unit tests pass cleanly. Live calls now terminate gracefully immediately following bot goodbye responses.
+
+---
+
+## Milestone — Self-Improving FAQ System with Qdrant Vector Search
+**Date**: 2026-08-09
+**Status**: ✅ Complete — Implemented and Tested
+
+### Overview
+Extended the existing keyword-based FAQ lookup (`fetch_faq` tool) with a semantic vector search fallback and an automatic capture mechanism for unanswered caller questions, so the knowledge base can grow from real caller behavior instead of manual curation alone. This is the first piece of the broader RAG-based knowledge system planned for the
