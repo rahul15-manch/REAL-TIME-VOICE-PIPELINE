@@ -31,3 +31,5 @@ openai==2.44.0
 qdrant-client==1.19.0
 # sentence-transformers is no longer needed since we use OpenAI embeddings API
 gunicorn==21.2.0
+soundfile==0.14.0
+numpy==2.4.6
