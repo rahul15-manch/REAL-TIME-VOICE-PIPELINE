@@ -1,0 +1,26 @@
+version: '3.8'
+
+services:
+  voice-pipeline:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - LLM_PROVIDER=${LLM_PROVIDER:-openai}
+      - TTS_PROVIDER=${TTS_PROVIDER:-cartesia}
+      - TRANSPORT_MODE=${TRANSPORT_MODE:-livekit}
+      - DATABASE_URL=${DATABASE_URL:-postgresql+asyncpg://user:pass@localhost:5432/voice_db}
+      - JWT_SECRET=${JWT_SECRET:-super-secret-key}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - DEEPGRAM_API_KEY=${DEEPGRAM_API_KEY}
+      - CARTESIA_API_KEY=${CARTESIA_API_KEY}
+      - ELEVEN_LABS_API_KEY=${ELEVEN_LABS_API_KEY}
+      - TWILIO_ACCOUNT_SID=${TWILIO_ACCOUNT_SID}
+      - TWILIO_AUTH_TOKEN=${TWILIO_AUTH_TOKEN}
+      - LIVEKIT_URL=${LIVEKIT_URL}
+      - LIVEKIT_API_KEY=${LIVEKIT_API_KEY}
+      - LIVEKIT_API_SECRET=${LIVEKIT_API_SECRET}
+      - QDRANT_URL=${QDRANT_URL:-http://localhost:6333}
+      - QDRANT_API_KEY=${QDRANT_API_KEY}
+    restart: unless-stopped

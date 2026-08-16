@@ -13,3 +13,15 @@ __pycache__
 .gemini
 logs/
 *.log
+
+.env.*
+*.pem
+*.key
+secrets/
+credentials/
+aws_credentials/
+!.env.example
+scratch/
+reports/
+htmlcov/
+coverage.xml
