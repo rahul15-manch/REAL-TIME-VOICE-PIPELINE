@@ -103,6 +103,21 @@ async def lifespan(app: FastAPI):
     except Exception as faq_err:
         logger.error(f"Failed to refresh FAQ cache on startup: {faq_err}")
 
+    # Step 7: Prewarm providers (DNS resolution & TLS handshakes)
+    try:
+        import aiohttp
+        async with aiohttp.ClientSession() as session:
+            # Prewarm OpenAI/Groq
+            await session.head("https://api.openai.com", timeout=2)
+            await session.head("https://api.groq.com", timeout=2)
+            # Prewarm Deepgram
+            await session.head("https://api.deepgram.com", timeout=2)
+            # Prewarm Cartesia
+            await session.head("https://api.cartesia.ai", timeout=2)
+        logger.info("Provider DNS and TLS handshakes prewarmed successfully.")
+    except Exception as prewarm_err:
+        logger.warning(f"Failed to prewarm some provider endpoints: {prewarm_err}")
+
     # Ensure Qdrant vector DB collections exist (FAQ semantic search + pending FAQs)
     try:
         from app.services.vector_store import ensure_collections
@@ -110,7 +125,6 @@ async def lifespan(app: FastAPI):
         logger.info("Qdrant vector store collections verified/created on startup.")
     except Exception as vector_err:
         logger.error(f"Failed to initialize Qdrant vector store (will degrade gracefully): {vector_err}")
-        
     # Mark as ready regardless of DB to allow graceful degradation
     APP_STATE["is_ready"] = True
     
@@ -496,10 +510,14 @@ async def run_voice_session(
                 fallback_client = await ClientRepository.get_or_create_client(db_session, fallback_phone)
                 c_id = fallback_client.id
                 masked_fallback = f"{fallback_phone[:3]}******{fallback_phone[-4:]}" if len(fallback_phone) > 7 and fallback_phone != "unknown_client" else fallback_phone
-                logger.warning(
-                    "client_id was missing in session metadata for {sid}; fell back to phone_number lookup ({phone})",
-                    sid=event.session_id, phone=masked_fallback,
-                )
+                
+                if fallback_phone == "unknown_client":
+                    logger.info("Session closed for web client (unknown_client).")
+                else:
+                    logger.warning(
+                        "client_id was missing in session metadata for {sid}; fell back to phone_number lookup ({phone})",
+                        sid=event.session_id, phone=masked_fallback,
+                    )
 
             if c_id:
                 

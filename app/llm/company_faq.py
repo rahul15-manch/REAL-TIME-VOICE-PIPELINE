@@ -21,6 +21,7 @@ from typing import Optional
 from loguru import logger
 
 _CACHED_CONTEXT_BLOCK: Optional[str] = None
+_CACHED_FAQ_LIST = []
 _COMPANY_NAME = "Cybernauts"
 
 
@@ -49,7 +50,15 @@ async def refresh_faq_cache() -> None:
         ]
 
         current_category = None
+        global _CACHED_FAQ_LIST
+        _CACHED_FAQ_LIST.clear()
+        
         for faq in faqs:
+            _CACHED_FAQ_LIST.append({
+                "category": faq.category,
+                "question": faq.question,
+                "answer": faq.answer
+            })
             if faq.category != current_category:
                 lines.append(f"## {faq.category}")
                 current_category = faq.category

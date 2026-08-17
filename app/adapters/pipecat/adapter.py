@@ -104,7 +104,113 @@ class GreetingPlayerProcessor(FrameProcessor):
             logger.error(f"Failed to play greeting wav: {e}")
 
 
-# ── Real pipeline task builder ────────────────────────────────────────
+import asyncio
+from pipecat.frames.frames import LLMMessagesAppendFrame, TextFrame, TTSStartedFrame, BotConnectedFrame, Frame, LLMFullResponseEndFrame
+from pipecat.processors.frame_processor import FrameProcessor, FrameDirection
+
+class WelcomeBackTriggerProcessor(FrameProcessor):
+    """Triggers the LLM to generate a personalized greeting for returning users without adding fake user turns."""
+    def __init__(self, previous_summary: str):
+        super().__init__()
+        self.previous_summary = previous_summary
+        self.has_triggered = False
+        self.audio_started = False
+        self._watchdog_task = None
+        self._system_message = {
+            "role": "system", 
+            "content": f"The user has just connected to the call. Their previous summary is: {self.previous_summary}. Welcome them back warmly and briefly. Do not wait for their prompt."
+        }
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection):
+        await super().process_frame(frame, direction)
+        from loguru import logger
+        
+        if isinstance(frame, BotConnectedFrame) and not self.has_triggered:
+            self.has_triggered = True
+            logger.info("WelcomeBackTriggerProcessor: Triggering dynamic greeting without fake user turn.")
+            
+            # Push the system prompt directly DOWNSTREAM to LLM
+            await self.push_frame(LLMMessagesAppendFrame(messages=[self._system_message]), FrameDirection.DOWNSTREAM)
+            
+            # Start the 3-second watchdog
+            self._watchdog_task = asyncio.create_task(self._watchdog())
+            
+        elif isinstance(frame, TTSStartedFrame):
+            self.audio_started = True
+            if self._watchdog_task and not self._watchdog_task.done():
+                self._watchdog_task.cancel()
+            
+        await self.push_frame(frame, direction)
+
+    async def _watchdog(self):
+        from loguru import logger
+        await asyncio.sleep(3.0)
+        if not self.audio_started:
+            logger.warning("WelcomeBackTriggerProcessor: 3-second watchdog triggered! Forcing fallback welcome.")
+            await self.push_frame(TextFrame("Welcome back!"), FrameDirection.DOWNSTREAM)
+
+class BootstrapMemoryScrubber(FrameProcessor):
+    """Cleans up the LLM context to ensure the bootstrap exchange is excluded from history."""
+    def __init__(self, context, system_message):
+        super().__init__()
+        self.context = context
+        self.system_message = system_message
+        self.has_scrubbed = False
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection):
+        await super().process_frame(frame, direction)
+        from loguru import logger
+        
+        if isinstance(frame, LLMFullResponseEndFrame) and not self.has_scrubbed:
+            self.has_scrubbed = True
+            try:
+                # Remove the exact system message we added and the assistant's response
+                if self.context.messages and len(self.context.messages) >= 2:
+                    if self.context.messages[-2].get("role") == "system" and self.context.messages[-2].get("content") == self.system_message["content"]:
+                        self.context.messages.pop(-2) # Remove system
+                        self.context.messages.pop(-1) # Remove assistant response
+                        logger.info("BootstrapMemoryScrubber: Successfully excluded bootstrap event from memory.")
+            except Exception as e:
+                logger.warning(f"BootstrapMemoryScrubber: Could not scrub memory: {e}")
+                
+        await self.push_frame(frame, direction)
+
+# ── Fast Sentence Aggregator (Custom) ─────────────────────────────────
+
+import re
+from pipecat.processors.frame_processor import FrameProcessor, FrameDirection
+from pipecat.frames.frames import Frame, TextFrame, EndFrame, StartFrame, SystemFrame
+
+class FastSentenceAggregator(FrameProcessor):
+    """Aggregates text chunks into complete sentences and pushes downstream instantly."""
+    def __init__(self):
+        super().__init__()
+        self._aggregation = ""
+        # Match standard punctuation and Hindi danda
+        self._end_punctuation = re.compile(r'([.?!।।]+)\s*$')
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection):
+        await super().process_frame(frame, direction)
+        
+        from pipecat.frames.frames import LLMFullResponseEndFrame, CancelFrame, UserStartedSpeakingFrame
+        
+        if isinstance(frame, TextFrame):
+            self._aggregation += frame.text
+            # If length >= 8 and ends with punctuation, flush immediately
+            if len(self._aggregation.strip()) >= 8 and self._end_punctuation.search(self._aggregation):
+                await self.push_frame(TextFrame(self._aggregation))
+                self._aggregation = ""
+        elif isinstance(frame, (EndFrame, LLMFullResponseEndFrame)):
+            if self._aggregation.strip():
+                await self.push_frame(TextFrame(self._aggregation))
+                self._aggregation = ""
+            await self.push_frame(frame, direction)
+        elif isinstance(frame, (CancelFrame, UserStartedSpeakingFrame)):
+            self._aggregation = ""
+            await self.push_frame(frame, direction)
+        else:
+            await self.push_frame(frame, direction)
+
 
 def _build_real_pipeline_task(
     pipecat_processors: List[Any],
@@ -201,7 +307,9 @@ def _build_real_pipeline_task(
         
         agg_params = LLMUserAggregatorParams(
             user_turn_strategies=UserTurnStrategies(
-                stop=[SpeechTimeoutUserTurnStopStrategy(user_speech_timeout=0.8)]
+                # CRITICAL PATH OPTIMIZATION: Reduce timeout to 0.0s to start LLM instantly
+                # VAD already waits 220ms, so we don't need any sequential waiting here.
+                stop=[SpeechTimeoutUserTurnStopStrategy(user_speech_timeout=0.0)]
             )
         )
         user_agg = LLMUserAggregator(context, params=agg_params)
@@ -211,42 +319,42 @@ def _build_real_pipeline_task(
         new_processors = []
         from app.adapters.pipecat.language_router import LanguageRoutingProcessor, CallTerminationProcessor
         from app.adapters.pipecat.tool_interceptor import ToolInterceptionProcessor
-        from app.adapters.pipecat.filler_processor import LatencyFillerProcessor
-        
-        # Add filler processor with multiple Cartesia-generated wavs
-        import os
-        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-        filler_wavs = [
-            os.path.join(project_root, "hmm.wav"),
-            os.path.join(project_root, "wait_a_minute.wav"),
-            os.path.join(project_root, "let_me_think.wav")
-        ]
-        filler_processor = LatencyFillerProcessor(
-            filler_wav_paths=filler_wavs,
-            delay_threshold_ms=1000,
-            event_bus=event_bus,
-            session_id=session_id,
-            shared_state=shared_state
-        )
-        
+        # CRITICAL PATH OPTIMIZATION: LatencyFillerProcessor is removed. 
+        # With TTFA targets < 700ms, a 1000ms delay threshold means the filler never triggers
+        # and only adds pipeline overhead.
         # Instantiate greeting processor if greetings.wav exists and it's a new customer
         greeting_processor = None
-        if os.getenv("ENABLE_INITIAL_GREETING", "True").lower() == "true" and not previous_summary:
-            greetings_wav_path = os.path.join(project_root, "greetings.wav")
-            if os.path.exists(greetings_wav_path):
-                greeting_processor = GreetingPlayerProcessor(greetings_wav_path)
+        welcome_back_processor = None
+        bootstrap_scrubber = None
+        import os
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+        if os.getenv("ENABLE_INITIAL_GREETING", "True").lower() == "true":
+            if not previous_summary:
+                greetings_wav_path = os.path.join(project_root, "greetings.wav")
+                if os.path.exists(greetings_wav_path):
+                    greeting_processor = GreetingPlayerProcessor(greetings_wav_path)
+            else:
+                # If there's a previous summary, they are a returning user. We skip the generic wav 
+                # and trigger the LLM to greet them dynamically based on the memory!
+                welcome_back_processor = WelcomeBackTriggerProcessor(previous_summary)
+                bootstrap_scrubber = BootstrapMemoryScrubber(context, welcome_back_processor._system_message)
         
         for p in pipecat_processors:
             if isinstance(p, (GroqLLMService, OpenAILLMService)) or p.__class__.__name__ == "ResilientLLMProcessor":
                 new_processors.append(LanguageRoutingProcessor(shared_state=shared_state))
+                if welcome_back_processor:
+                    new_processors.append(welcome_back_processor)
                 new_processors.append(user_agg)
-                new_processors.append(filler_processor)
+                # filler_processor removed for latency optimization
                 new_processors.append(p)
                 new_processors.append(ToolInterceptionProcessor(shared_state=shared_state))
             elif p.__class__.__name__.endswith("TTSService"):
+                new_processors.append(FastSentenceAggregator())
                 new_processors.append(p)
                 new_processors.append(CallTerminationProcessor(shared_state=shared_state))
                 new_processors.append(asst_agg)
+                if bootstrap_scrubber:
+                    new_processors.append(bootstrap_scrubber)
                 if greeting_processor:
                     new_processors.append(greeting_processor)
             else:
@@ -271,6 +379,7 @@ def _build_real_pipeline_task(
             self._current_llm_response = ""
             self._first_partial_logged = False
             self._first_llm_token_logged = False
+            self._first_complete_sentence_logged = False
             self._first_tts_chunk_logged = False
             self._stt_started_logged = False
 
@@ -289,11 +398,16 @@ def _build_real_pipeline_task(
                 self._stt_started_logged = True
             
             # Accumulate LLM response text only when pushed directly from the LLM processor
-            if isinstance(frame, TextFrame) and source_class in ("GroqLLMService", "OpenAILLMService", "ResilientLLMProcessor"):
-                if not self._first_llm_token_logged:
-                    logger.info(f"[OBSERVABILITY] First LLM token | session_id={bridge._session_id} | ts={now}")
-                    self._first_llm_token_logged = True
-                self._current_llm_response += frame.text
+            if isinstance(frame, TextFrame):
+                if source_class in ("GroqLLMService", "OpenAILLMService", "ResilientLLMProcessor"):
+                    if not self._first_llm_token_logged:
+                        logger.info(f"[OBSERVABILITY] First LLM token | session_id={bridge._session_id} | ts={now}")
+                        self._first_llm_token_logged = True
+                    self._current_llm_response += frame.text
+                elif source_class == "FastSentenceAggregator":
+                    if not self._first_complete_sentence_logged:
+                        logger.info(f"[OBSERVABILITY] First complete sentence (TTS request) | session_id={bridge._session_id} | ts={now} | text='{frame.text}'")
+                        self._first_complete_sentence_logged = True
             
             if isinstance(frame, UserStartedSpeakingFrame):
                 if latency_tracker:
@@ -339,21 +453,25 @@ def _build_real_pipeline_task(
                     self._current_llm_response = ""
                 
             elif isinstance(frame, TTSStartedFrame):
-                if latency_tracker:
-                    latency_tracker.on_tts_start()
-                if not self._first_tts_chunk_logged:
-                    logger.info(f"[OBSERVABILITY] First TTS chunk synthesized | session_id={bridge._session_id} | ts={now}")
-                    self._first_tts_chunk_logged = True
-                bridge.on_audio_started()
+                if not getattr(self, "_tts_is_active", False):
+                    self._tts_is_active = True
+                    if latency_tracker:
+                        latency_tracker.on_tts_start()
+                    if not self._first_tts_chunk_logged:
+                        logger.info(f"[OBSERVABILITY] First TTS chunk synthesized | session_id={bridge._session_id} | ts={now}")
+                        self._first_tts_chunk_logged = True
+                    bridge.on_audio_started()
                 
             elif isinstance(frame, AudioRawFrame) and source_class in ("CartesiaTTSService", "ElevenLabsTTSService", "DeepgramTTSService") and not getattr(self, "_first_audio_packet_sent", False):
                 logger.info(f"[OBSERVABILITY] First audio packet sent (Transport bound) | session_id={bridge._session_id} | ts={now}")
                 self._first_audio_packet_sent = True
                 
             elif isinstance(frame, TTSStoppedFrame):
-                logger.info(f"[OBSERVABILITY] Audio streaming completion | session_id={bridge._session_id} | ts={now}")
-                bridge.on_audio_finished()
-                self._first_audio_packet_sent = False
+                if getattr(self, "_tts_is_active", False):
+                    self._tts_is_active = False
+                    logger.info(f"[OBSERVABILITY] Audio streaming completion | session_id={bridge._session_id} | ts={now}")
+                    bridge.on_audio_finished()
+                    self._first_audio_packet_sent = False
                 
             elif isinstance(frame, EndFrame):
                 logger.info(f"[OBSERVABILITY] Pipeline shutdown initiated | session_id={bridge._session_id} | ts={now}")

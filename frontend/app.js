@@ -417,8 +417,8 @@ class VoicePipelineClient {
             // Built-in LiveKit method to resume AudioContext (helps with browser autoplay policies)
             await this.room.startAudio().catch(e => console.warn("AudioContext error:", e));
             
-            // 3. Enable local mic
-            await this.room.localParticipant.enableCameraAndMicrophone();
+            // 3. Enable local mic (ONLY mic, to prevent camera access issues from blocking audio)
+            await this.room.localParticipant.setMicrophoneEnabled(true);
 
             this.ui.setConnectionState('connected');
 

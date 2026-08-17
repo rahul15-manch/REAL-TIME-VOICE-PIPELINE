@@ -33,8 +33,15 @@ def get_client() -> QdrantClient:
 
 def ensure_collections():
     """Call once at startup — creates collections if they don't exist."""
+    global _client
     client = get_client()
-    existing = {c.name for c in client.get_collections().collections}
+    try:
+        existing = {c.name for c in client.get_collections().collections}
+    except Exception as e:
+        logger.warning(f"Could not connect to Qdrant server ({e}). Falling back to in-memory Qdrant database.")
+        _client = QdrantClient(location=":memory:")
+        client = _client
+        existing = {c.name for c in client.get_collections().collections}
 
     for name in (FAQ_COLLECTION, PENDING_COLLECTION):
         if name not in existing:
