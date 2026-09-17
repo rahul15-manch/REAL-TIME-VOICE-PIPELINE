@@ -12,10 +12,17 @@ def create_deepgram_stt(api_key: str, model: str = "nova-2-phonecall", language:
             language=language,
             smart_format=True,
             interim_results=True,
-            endpointing=80, # Reduced to 80ms for latency
+            endpointing=100,
         ),
     )
 
 def build_vad_analyzer() -> SileroVADAnalyzer:
     """Exposed factory for the main app to build the VAD analyzer via Pillar 2."""
-    return SileroVADAnalyzer()
+    return SileroVADAnalyzer(
+        params=VADParams(
+            confidence=0.7,
+            start_secs=0.1,     # 100ms for fast speech start detection
+            stop_secs=0.15,     # 150ms for ultra-fast turn stopping
+            min_volume=0.05,    # 5% threshold to block background hums
+        )
+    )

@@ -27,7 +27,5 @@ USER appuser
 # Expose the application port
 EXPOSE 8000
 
-# Start the application using Gunicorn with Uvicorn workers
-# We use 4 workers to support horizontal scaling across CPU cores,
-# as the application natively handles distributed locking via PostgreSQL.
-CMD ["gunicorn", "-k", "uvicorn.workers.UvicornWorker", "--workers", "4", "--bind", "0.0.0.0:8000", "app.main:app"]
+# Run the application with Gunicorn using Uvicorn workers (1 worker, 10-minute timeout)
+CMD ["gunicorn", "app.main:app", "-w", "1", "-k", "uvicorn.workers.UvicornWorker", "--timeout", "600", "--bind", "0.0.0.0:8000"]
