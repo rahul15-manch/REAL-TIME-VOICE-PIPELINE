@@ -1,31 +1,35 @@
-FROM python:3.14.4-slim
+# Use a stable official Python runtime as a parent image
+FROM python:3.12-slim
 
-# Set environment variables for Python
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+# Set environment variables
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV PORT=8000
 
-# Set the working directory
+# Set the working directory in the container
 WORKDIR /app
 
-# Install system dependencies
-# libsndfile1 is required by the soundfile python package for audio processing
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends libsndfile1 && \
-    rm -rf /var/lib/apt/lists/*
+# Install system dependencies (build-essential, audio dev packages, and curl)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    curl \
+    portaudio19-dev \
+    libasound2-dev \
+    libcurl4-openssl-dev \
+    libsndfile1 \
+    && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies
+# Copy requirements.txt and install Python dependencies
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Install dependencies
+RUN pip install --no-cache-dir --prefer-binary -r requirements.txt
 
-# Copy application source code
+# Copy the rest of the application code
 COPY . .
-
-# Run as non-root user for security
-RUN useradd -m appuser && chown -R appuser:appuser /app
-USER appuser
 
 # Expose the application port
 EXPOSE 8000
 
-# Run the application with Gunicorn using Uvicorn workers (1 worker, 10-minute timeout)
+# Run the application with Gunicorn using Uvicorn workers (reduced to 1 worker, 10-minute timeout for slow EC2)
 CMD ["gunicorn", "app.main:app", "-w", "1", "-k", "uvicorn.workers.UvicornWorker", "--timeout", "600", "--bind", "0.0.0.0:8000"]
